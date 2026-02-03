@@ -118,16 +118,13 @@ export const processVideoWithThumbnail = async (
       ];
       const combinedStream = new MediaStream(combinedTracks);
 
-      // PRIORITY: Enhanced MIME Type Detection
-      // Chrome supports 'video/mp4' (H.264) which is best for editors/Shopee.
-      // If forced to WebM, we must use .webm extension or players break.
+      // PRIORITY: WEBM (Most stable for Browser Recording)
+      // Shopee Video supports WebM upload directly.
       const mimeTypes = [
-        'video/mp4;codecs=avc1.4d402a', // H.264 High Profile (Best quality)
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2', // H.264 Baseline
-        'video/mp4', // Generic MP4
-        'video/webm;codecs=h264,opus', // WebM with H.264 (Chrome specific)
-        'video/webm;codecs=vp9,opus', // High quality WebM
-        'video/webm' // Generic WebM
+        'video/webm;codecs=h264,opus', // Chrome best quality
+        'video/webm;codecs=vp9,opus',  // High compression
+        'video/webm',                  // Standard
+        'video/mp4'                    // Fallback (Safari)
       ];
 
       let selectedMimeType = ''; 
@@ -140,7 +137,7 @@ export const processVideoWithThumbnail = async (
       
       if (!selectedMimeType) selectedMimeType = 'video/webm';
       
-      // Determine correct extension
+      // Determine correct extension based on MIME
       const isMp4 = selectedMimeType.includes('mp4');
       const extension = isMp4 ? 'mp4' : 'webm';
 
@@ -223,8 +220,6 @@ export const processVideoWithThumbnail = async (
               ctx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, width, height);
           } else {
               // NEGATIVE ZOOM (Zoom Out - Shrink)
-              // Example: zoom = -0.2 (20% smaller)
-              // Scale factor = 1 + (-0.2) = 0.8
               const scale = 1 + zoom; 
               const dWidth = width * scale;
               const dHeight = height * scale;
