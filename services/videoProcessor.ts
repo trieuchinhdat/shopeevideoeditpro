@@ -126,20 +126,24 @@ export const processVideoWithThumbnail = async (
       ];
       const combinedStream = new MediaStream(combinedTracks);
 
+      // PRIORITY: Try MP4 first for compatibility
       const mimeTypes = [
-        'video/mp4;codecs=h264,aac',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2', // Standard H.264 MP4 (Chrome/Edge/Modern browsers)
         'video/mp4',
         'video/webm;codecs=h264,opus',
         'video/webm'
       ];
 
-      let selectedMimeType = 'video/webm'; 
+      let selectedMimeType = ''; 
       for (const type of mimeTypes) {
         if (MediaRecorder.isTypeSupported(type)) {
           selectedMimeType = type;
           break;
         }
       }
+      
+      // Fallback if no specific type is supported (unlikely in modern browsers)
+      if (!selectedMimeType) selectedMimeType = 'video/webm';
 
       // High bitrate for quality
       const bitrate = (width * height > 921600) ? 8000000 : 4000000;
@@ -222,14 +226,31 @@ export const processVideoWithThumbnail = async (
               ctx.scale(-1, 1);
           }
 
-          // 2. Handle Zoom (Cropping)
           const zoom = options.zoomLevel || 0;
-          const sx = width * zoom / 2;
-          const sy = height * zoom / 2;
-          const sWidth = width * (1 - zoom);
-          const sHeight = height * (1 - zoom);
 
-          ctx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, width, height);
+          if (zoom > 0) {
+              // POSITIVE ZOOM: CROP (Zoom In)
+              // Calculate source rectangle (what part of video to take)
+              const sx = width * zoom / 2;
+              const sy = height * zoom / 2;
+              const sWidth = width * (1 - zoom);
+              const sHeight = height * (1 - zoom);
+              
+              // Draw full canvas size
+              ctx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, width, height);
+
+          } else {
+              // NEGATIVE ZOOM: PADDING (Zoom Out)
+              // Calculate destination rectangle (where to draw on canvas)
+              const scale = 1 + zoom; // e.g. -0.2 => 0.8 scale
+              const dWidth = width * scale;
+              const dHeight = height * scale;
+              const dx = (width - dWidth) / 2; // Center horizontally
+              const dy = (height - dHeight) / 2; // Center vertically
+
+              // Draw full video source into smaller destination
+              ctx.drawImage(videoElement, 0, 0, width, height, dx, dy, dWidth, dHeight);
+          }
 
           ctx.restore();
       };
@@ -261,6 +282,7 @@ export const processVideoWithThumbnail = async (
             ctx.fillStyle = 'rgba(0,0,0,0.3)'; 
             ctx.fillRect(0, 0, width, height);
         } else {
+            // Standard black background (essential for zoom out letterboxing)
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, width, height);
         }

@@ -486,15 +486,20 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-3 gap-2">
                         <div className="col-span-3 mb-2">
                             <div className="flex justify-between text-xs mb-1">
-                            <span>Zoom / Xóa Logo</span>
+                            <span>Zoom (Kéo trái để thu nhỏ)</span>
                             <span>{Math.round(config.zoomLevel * 100)}%</span>
                             </div>
                             <input 
-                            type="range" min="0" max="0.4" step="0.01"
+                            type="range" min="-0.5" max="0.5" step="0.05"
                             value={config.zoomLevel}
                             onChange={(e) => setConfig({...config, zoomLevel: parseFloat(e.target.value)})}
                             className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#ee4d2d]"
                             />
+                            <div className="flex justify-between text-[9px] text-gray-400 mt-1">
+                                <span>-50% (Nhỏ)</span>
+                                <span>0%</span>
+                                <span>+50% (To)</span>
+                            </div>
                         </div>
 
                         <button 

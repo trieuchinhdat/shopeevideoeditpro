@@ -3,7 +3,7 @@ export interface ProcessOptions {
   maintainAspectRatio: boolean;
   
   // Advanced Editing / Anti-detection features
-  zoomLevel: number; // 0 to 0.5 (0% to 50%)
+  zoomLevel: number; // -0.5 to 0.5 (-50% to +50%)
   flipHorizontal: boolean;
   speed: number; // 0.5 to 2.0
   volume: number; // 0 to 2.0
