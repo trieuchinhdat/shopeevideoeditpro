@@ -37,6 +37,7 @@ export interface VideoItem {
   status: ProcessingStatus;
   progress: number;
   resultUrl: string | null;
+  extension?: string; // New field to store the actual extension (mp4 or webm)
   errorMsg?: string;
   name: string;
   duration?: number; // Store duration for trimming UI

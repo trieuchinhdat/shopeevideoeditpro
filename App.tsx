@@ -263,7 +263,8 @@ const App: React.FC = () => {
       setSelectedVideoId(item.id);
 
       try {
-        const blob = await processVideoWithThumbnail(
+        // Change: Accept both blob and extension from processor
+        const { blob, extension } = await processVideoWithThumbnail(
           item.file!,
           image.file!,
           config, 
@@ -272,7 +273,13 @@ const App: React.FC = () => {
           }
         );
         const url = URL.createObjectURL(blob);
-        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'completed', resultUrl: url, progress: 100 } : v));
+        setVideos(prev => prev.map(v => v.id === item.id ? { 
+            ...v, 
+            status: 'completed', 
+            resultUrl: url, 
+            extension, // Save extension (mp4 or webm)
+            progress: 100 
+        } : v));
       } catch (e) {
         console.error(e);
         setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi xử lý video' } : v));
@@ -601,6 +608,12 @@ const App: React.FC = () => {
                                 <div className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1">
                                    {video.sourceType === 'url' ? <LinkIcon size={10}/> : <FileVideo size={10}/>}
                                    {video.duration ? `${Math.floor(video.duration)}s` : ''}
+                                   {/* Change: Display detected extension if completed */}
+                                   {video.status === 'completed' && (
+                                     <span className="ml-1 uppercase px-1 bg-gray-200 rounded text-[9px] text-gray-600 font-bold">
+                                       {video.extension || 'MP4'}
+                                     </span>
+                                   )}
                                 </div>
                              </div>
                              <button 
@@ -671,11 +684,17 @@ const App: React.FC = () => {
                  <div className="mt-4 pt-4 border-t border-gray-100">
                    <a
                      href={selectedVideo.resultUrl}
-                     download={`shopee-studio-${selectedVideo.id}.mp4`}
+                     // Change: Use the detected extension for download filename
+                     download={`shopee-studio-${selectedVideo.id}.${selectedVideo.extension || 'mp4'}`}
                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition shadow-lg shadow-green-100"
                    >
-                     <Download size={20} /> Tải Video Này
+                     <Download size={20} /> Tải Video Này {selectedVideo.extension ? `(${selectedVideo.extension.toUpperCase()})` : ''}
                    </a>
+                   {selectedVideo.extension === 'webm' && (
+                       <p className="text-[10px] text-red-500 mt-2 text-center">
+                           Lưu ý: Trình duyệt của bạn chỉ hỗ trợ xuất file WebM. Shopee Video hỗ trợ WebM, nhưng nếu gặp lỗi, hãy dùng phần mềm đổi đuôi sang MP4.
+                       </p>
+                   )}
                  </div>
               )}
             </div>
