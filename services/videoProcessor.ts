@@ -1,5 +1,42 @@
 
 import { ProcessOptions } from '../types';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+
+// WebCodecs Type Declarations
+declare class VideoEncoder {
+  constructor(init: { output: (chunk: any, meta: any) => void, error: (e: any) => void });
+  state: string;
+  configure(config: any): void;
+  encode(frame: VideoFrame, options?: any): void;
+  flush(): Promise<void>;
+  close(): void;
+}
+
+declare class AudioEncoder {
+  constructor(init: { output: (chunk: any, meta: any) => void, error: (e: any) => void });
+  state: string;
+  configure(config: any): void;
+  encode(data: AudioData): void;
+  flush(): Promise<void>;
+  close(): void;
+}
+
+declare class VideoFrame {
+  constructor(source: CanvasImageSource, init?: { timestamp: number });
+  close(): void;
+}
+
+declare class AudioData {
+  constructor(init: any);
+  copyTo(destination: any, options: { planeIndex: number }): void;
+  close(): void;
+  timestamp: number;
+  numberOfFrames: number;
+  numberOfChannels: number;
+  sampleRate: number;
+  format: any;
+  allocationSize(options: any): number;
+}
 
 export const processVideoWithThumbnail = async (
   videoFile: File,
@@ -8,299 +45,333 @@ export const processVideoWithThumbnail = async (
   onProgress: (progress: number) => void
 ): Promise<{ blob: Blob; extension: string }> => {
   return new Promise(async (resolve, reject) => {
-    try {
-      // 1. Load Assets
-      const videoUrl = URL.createObjectURL(videoFile);
-      const imageUrl = URL.createObjectURL(imageFile);
+    let videoElement: HTMLVideoElement | null = null;
+    let audioCtx: AudioContext | null = null;
+    let videoEncoder: VideoEncoder | null = null;
+    let audioEncoder: AudioEncoder | null = null;
+    let muxer: any = null;
+    let cancelled = false;
+    
+    // Variables for cleanup need to be in this scope
+    let videoUrl: string | null = null;
+    let imageUrl: string | null = null;
 
-      const videoElement = document.createElement('video');
+    try {
+      // 1. Check Browser Support
+      if (typeof VideoEncoder === 'undefined' || typeof AudioEncoder === 'undefined') {
+        throw new Error("Trình duyệt của bạn không hỗ trợ WebCodecs. Vui lòng dùng Chrome, Edge hoặc Safari bản mới nhất.");
+      }
+
+      // 2. Load Assets
+      videoUrl = URL.createObjectURL(videoFile);
+      imageUrl = URL.createObjectURL(imageFile);
+
+      videoElement = document.createElement('video');
       videoElement.src = videoUrl;
       videoElement.crossOrigin = 'anonymous';
-      
-      // Basic Audio/Video settings
       videoElement.muted = false; 
-      videoElement.volume = Math.min(Math.max(options.volume, 0), 1); 
-      videoElement.playbackRate = options.speed || 1.0;
+      videoElement.volume = 1.0;  
       videoElement.preload = 'auto';
 
       const imageElement = new Image();
       imageElement.src = imageUrl;
       imageElement.crossOrigin = 'anonymous';
 
-      // Wait for metadata and image load
       await Promise.all([
-        new Promise((r, j) => {
-           videoElement.onloadedmetadata = r;
-           videoElement.onerror = j;
-        }),
-        new Promise((r, j) => {
-           imageElement.onload = r;
-           imageElement.onerror = j;
-        }),
+        new Promise((r, j) => { videoElement!.onloadedmetadata = r; videoElement!.onerror = j; }),
+        new Promise((r, j) => { imageElement.onload = r; imageElement.onerror = j; })
       ]);
 
+      // 3. Trimming Logic
       const originalDuration = videoElement.duration;
-      // Handle Trimming Logic
       const startTimeOffset = options.trimStart || 0;
       const endTimeLimit = (options.trimEnd > 0 && options.trimEnd < originalDuration) 
                            ? options.trimEnd 
                            : originalDuration;
       
-      // Validate trim
-      if (startTimeOffset >= endTimeLimit) {
-        throw new Error("Thời gian bắt đầu cắt phải nhỏ hơn thời gian kết thúc.");
-      }
+      if (startTimeOffset >= endTimeLimit) throw new Error("Thời gian bắt đầu cắt phải nhỏ hơn thời gian kết thúc.");
+      const duration = endTimeLimit - startTimeOffset;
+
+      // 4. Set Dimensions & FPS
+      // Ensure dimensions are even for H.264
+      let width = videoElement.videoWidth;
+      let height = videoElement.videoHeight;
+      if (width % 2 !== 0) width -= 1;
+      if (height % 2 !== 0) height -= 1;
       
-      // Set initial time
-      videoElement.currentTime = startTimeOffset;
+      const fps = 30; 
 
-      const width = videoElement.videoWidth;
-      const height = videoElement.videoHeight;
-      const fps = 30; // Standardize output FPS
+      // 5. Init Muxer (MP4 Container)
+      muxer = new Muxer({
+        target: new ArrayBufferTarget(),
+        video: {
+          codec: 'avc', // H.264
+          width: width,
+          height: height
+        },
+        audio: {
+          codec: 'aac',
+          numberOfChannels: 2,
+          sampleRate: 44100 
+        },
+        fastStart: 'in-memory',
+        firstTimestampBehavior: 'offset'
+      });
 
-      // 2. Setup Canvas
+      // 6. Init Video Encoder
+      videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: (e) => console.error("VideoEncoder Error", e)
+      });
+
+      videoEncoder.configure({
+        codec: 'avc1.4d002a', // H.264 Main Profile Level 4.2
+        width: width,
+        height: height,
+        bitrate: Math.min(width * height * 4, 10_000_000), // Higher quality bitrate (up to 10Mbps)
+        framerate: fps
+      });
+
+      // 7. Init Audio Encoder
+      audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: (e) => console.error("AudioEncoder Error", e)
+      });
+      
+      audioEncoder.configure({
+        codec: 'mp4a.40.2', // AAC LC
+        numberOfChannels: 2,
+        sampleRate: 44100,
+        bitrate: 128000
+      });
+
+      // 8. Prepare Canvas & Context
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext('2d', { alpha: false }); // Optimize for no transparency
+      const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true })!;
 
-      if (!ctx) {
-        throw new Error('Could not get 2D context');
-      }
-
-      // --- PRE-RENDER FILM GRAIN ---
+      // --- EFFECTS SETUP ---
       let noisePattern: CanvasPattern | null = null;
       if (options.filmGrainScore > 0) {
-          const noiseCanvas = document.createElement('canvas');
-          const noiseSize = 256; 
-          noiseCanvas.width = noiseSize;
-          noiseCanvas.height = noiseSize;
-          const noiseCtx = noiseCanvas.getContext('2d');
-          if (noiseCtx) {
-              const idata = noiseCtx.createImageData(noiseSize, noiseSize);
-              const buffer32 = new Uint32Array(idata.data.buffer);
-              const len = buffer32.length;
-              for (let i = 0; i < len; i++) {
-                  if (Math.random() < 0.5) {
-                      const alpha = Math.floor(Math.random() * 255 * options.filmGrainScore * 0.5);
-                      const gray = Math.floor(Math.random() * 50); 
-                      buffer32[i] = (alpha << 24) | (gray << 16) | (gray << 8) | gray;
-                  }
-              }
-              noiseCtx.putImageData(idata, 0, 0);
-              noisePattern = ctx.createPattern(noiseCanvas, 'repeat');
+          const nCanvas = document.createElement('canvas');
+          nCanvas.width = 256; nCanvas.height = 256;
+          const nCtx = nCanvas.getContext('2d')!;
+          const idata = nCtx.createImageData(256, 256);
+          const buf = new Uint32Array(idata.data.buffer);
+          for (let i = 0; i < buf.length; i++) {
+             if (Math.random() < 0.5) {
+                const a = Math.floor(Math.random() * 255 * options.filmGrainScore * 0.5);
+                const g = Math.floor(Math.random() * 50);
+                buf[i] = (a << 24) | (g << 16) | (g << 8) | g;
+             }
           }
+          nCtx.putImageData(idata, 0, 0);
+          noisePattern = ctx.createPattern(nCanvas, 'repeat');
       }
 
-      // --- PRE-CALC VIGNETTE ---
       let vignetteGradient: CanvasGradient | null = null;
       if (options.enableVignette) {
-          const radius = Math.max(width, height) * 0.8;
-          vignetteGradient = ctx.createRadialGradient(width/2, height/2, radius * 0.4, width/2, height/2, radius);
+          const r = Math.max(width, height) * 0.8;
+          vignetteGradient = ctx.createRadialGradient(width/2, height/2, r * 0.4, width/2, height/2, r);
           vignetteGradient.addColorStop(0, 'rgba(0,0,0,0)');
           vignetteGradient.addColorStop(1, 'rgba(0,0,0,0.6)');
       }
 
-      // 3. Setup Audio
-      const audioCtx = new AudioContext();
-      const dest = audioCtx.createMediaStreamDestination();
-      const sourceNode = audioCtx.createMediaElementSource(videoElement);
+      // 9. Prepare Audio Processing Pipeline
+      audioCtx = new AudioContext({ sampleRate: 44100 });
+      const source = audioCtx.createMediaElementSource(videoElement);
       const gainNode = audioCtx.createGain();
-      gainNode.gain.value = options.volume; 
-      sourceNode.connect(gainNode);
-      gainNode.connect(dest);
+      gainNode.gain.value = options.volume;
+      const destination = audioCtx.createMediaStreamDestination();
+      source.connect(gainNode);
+      gainNode.connect(destination);
 
-      // 4. Setup Recorder
-      const canvasStream = canvas.captureStream(fps);
-      const combinedTracks = [
-        ...canvasStream.getVideoTracks(),
-        ...dest.stream.getAudioTracks(),
-      ];
-      const combinedStream = new MediaStream(combinedTracks);
+      const audioTrack = destination.stream.getAudioTracks()[0];
+      // @ts-ignore
+      const trackProcessor = new MediaStreamTrackProcessor({ track: audioTrack });
+      const audioReader = trackProcessor.readable.getReader();
 
-      // PRIORITY: WEBM (Most stable for Browser Recording)
-      // Shopee Video supports WebM upload directly.
-      const mimeTypes = [
-        'video/webm;codecs=h264,opus', // Chrome best quality
-        'video/webm;codecs=vp9,opus',  // High compression
-        'video/webm',                  // Standard
-        'video/mp4'                    // Fallback (Safari)
-      ];
-
-      let selectedMimeType = ''; 
-      for (const type of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-          selectedMimeType = type;
-          break;
-        }
-      }
+      // --- PROCESSING LOOP ---
+      videoElement.currentTime = startTimeOffset;
+      videoElement.playbackRate = options.speed || 1.0;
       
-      if (!selectedMimeType) selectedMimeType = 'video/webm';
+      // Start processing when video plays
+      await videoElement.play();
+
+      let lastKeyFrame = -100;
       
-      // Determine correct extension based on MIME
-      const isMp4 = selectedMimeType.includes('mp4');
-      const extension = isMp4 ? 'mp4' : 'webm';
+      // Audio Loop (Async)
+      const processAudio = async () => {
+         while (!cancelled) {
+            const { value, done } = await audioReader.read();
+            if (done || cancelled) break;
+            
+            if (value) {
+                const timestampSec = value.timestamp / 1e6;
+                // Trim logic for audio
+                if (timestampSec < startTimeOffset) {
+                    value.close();
+                    continue;
+                }
+                if (timestampSec > endTimeLimit) {
+                    value.close();
+                    break;
+                }
 
-      // High bitrate for quality
-      const bitrate = (width * height > 921600) ? 8000000 : 4000000;
+                const relativeTimestamp = Math.max(0, value.timestamp - (startTimeOffset * 1_000_000));
+                
+                // CORRECT COPYING LOGIC
+                const size = value.allocationSize({ planeIndex: 0 });
+                const buffer = new ArrayBuffer(size);
+                value.copyTo(buffer, { planeIndex: 0 });
+                
+                const newAudioData = new AudioData({
+                    format: value.format,
+                    sampleRate: value.sampleRate,
+                    numberOfFrames: value.numberOfFrames,
+                    numberOfChannels: value.numberOfChannels,
+                    timestamp: relativeTimestamp,
+                    data: buffer,
+                });
 
-      const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: selectedMimeType,
-        videoBitsPerSecond: bitrate
-      });
-
-      const chunks: Blob[] = [];
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: selectedMimeType });
-        URL.revokeObjectURL(videoUrl);
-        URL.revokeObjectURL(imageUrl);
-        audioCtx.close();
-        
-        // Return both blob and the correct extension
-        resolve({ blob, extension });
-      };
-
-      mediaRecorder.start();
-
-      // --- DRAWING LOGIC ---
-      const applyFilters = () => {
-         let filterString = '';
-         switch (options.colorFilter) {
-             case 'bright': filterString += 'brightness(1.1) saturate(1.15) '; break;
-             case 'warm':   filterString += 'sepia(0.15) contrast(1.05) saturate(1.1) '; break;
-             case 'cool':   filterString += 'hue-rotate(10deg) contrast(0.95) saturate(0.9) '; break;
-             case 'contrast': filterString += 'contrast(1.3) saturate(1.2) '; break;
-             case 'vintage': filterString += 'sepia(0.4) contrast(1.1) brightness(0.9) '; break;
-             default: break;
+                audioEncoder!.encode(newAudioData);
+                newAudioData.close();
+                value.close();
+            }
          }
-         ctx.filter = filterString.trim() || 'none';
+      };
+      
+      processAudio().catch(e => console.error("Audio processing error", e));
+
+      // Video Loop
+      const processVideo = async () => {
+         const drawFrame = async () => {
+             if (cancelled) return;
+
+             const currentTime = videoElement!.currentTime;
+             if (currentTime >= endTimeLimit || videoElement!.ended) {
+                 finishProcessing();
+                 return;
+             }
+
+             ctx.fillStyle = '#000000';
+             ctx.fillRect(0, 0, width, height);
+
+             let filterString = '';
+             switch (options.colorFilter) {
+                 case 'bright': filterString += 'brightness(1.1) saturate(1.15) '; break;
+                 case 'warm':   filterString += 'sepia(0.15) contrast(1.05) saturate(1.1) '; break;
+                 case 'cool':   filterString += 'hue-rotate(10deg) contrast(0.95) saturate(0.9) '; break;
+                 case 'contrast': filterString += 'contrast(1.3) saturate(1.2) '; break;
+                 case 'vintage': filterString += 'sepia(0.4) contrast(1.1) brightness(0.9) '; break;
+             }
+             ctx.filter = filterString || 'none';
+
+             ctx.save();
+             if (options.flipHorizontal) {
+                 ctx.translate(width, 0); ctx.scale(-1, 1);
+             }
+             const zoom = options.zoomLevel || 0;
+             if (zoom > 0) {
+                 const sx = width * zoom / 2, sy = height * zoom / 2;
+                 ctx.drawImage(videoElement!, sx, sy, width * (1-zoom), height * (1-zoom), 0, 0, width, height);
+             } else {
+                 const scale = 1 + zoom;
+                 const dw = width * scale, dh = height * scale;
+                 ctx.drawImage(videoElement!, 0, 0, width, height, (width-dw)/2, (height-dh)/2, dw, dh);
+             }
+             ctx.restore();
+
+             if (options.enableMotionBlur) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, width, height); }
+             if (options.filmGrainScore > 0 && noisePattern) {
+                 ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = noisePattern;
+                 ctx.translate(Math.random()*100, Math.random()*100); 
+                 ctx.fillRect(-100, -100, width+100, height+100); ctx.restore();
+             }
+             if (options.enableVignette && vignetteGradient) {
+                 ctx.fillStyle = vignetteGradient; ctx.fillRect(0, 0, width, height);
+             }
+
+             ctx.filter = 'none';
+             const imgRatio = imageElement.width / imageElement.height;
+             const renderH = width / imgRatio;
+             ctx.drawImage(imageElement, 0, (height - renderH)/2, width, renderH);
+
+             if (options.textOverlay.enabled && options.textOverlay.text) {
+                 const { text, position, backgroundColor, textColor } = options.textOverlay;
+                 const fontSize = height * 0.05;
+                 ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
+                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                 const tm = ctx.measureText(text);
+                 const bw = tm.width + fontSize; const bh = fontSize * 1.8;
+                 let tx = width/2, ty = height/2;
+                 if (position === 'top') ty = height*0.15; if (position === 'bottom') ty = height*0.85;
+                 ctx.fillStyle = backgroundColor; ctx.fillRect(tx-bw/2, ty-bh/2, bw, bh);
+                 ctx.fillStyle = textColor; ctx.fillText(text, tx, ty);
+             }
+
+             const timestamp = currentTime * 1_000_000;
+             const frame = new VideoFrame(canvas, { timestamp });
+             
+             const needsKeyFrame = (currentTime - lastKeyFrame) >= 2;
+             if (needsKeyFrame) lastKeyFrame = currentTime;
+
+             videoEncoder!.encode(frame, { keyFrame: needsKeyFrame });
+             frame.close();
+
+             const progress = ((currentTime - startTimeOffset) / duration) * 100;
+             onProgress(Math.min(progress, 99));
+
+             if (!cancelled) {
+                if ('requestVideoFrameCallback' in videoElement!) {
+                    videoElement!.requestVideoFrameCallback(drawFrame);
+                } else {
+                    requestAnimationFrame(drawFrame);
+                }
+             }
+         };
+
+         if ('requestVideoFrameCallback' in videoElement!) {
+             videoElement!.requestVideoFrameCallback(drawFrame);
+         } else {
+             requestAnimationFrame(drawFrame);
+         }
       };
 
-      const drawTextOverlay = () => {
-         if (!options.textOverlay.enabled || !options.textOverlay.text) return;
-         const { text, position, backgroundColor, textColor } = options.textOverlay;
-         const fontSize = height * 0.05; 
-         ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
-         ctx.textAlign = 'center';
-         ctx.textBaseline = 'middle';
-         const textMetrics = ctx.measureText(text);
-         const boxWidth = textMetrics.width + (fontSize * 1.0);
-         const boxHeight = fontSize * 1.8;
-         let x = width / 2;
-         let y = height / 2;
-         if (position === 'top') y = height * 0.15;
-         if (position === 'bottom') y = height * 0.85; 
-         ctx.fillStyle = backgroundColor;
-         ctx.fillRect(x - boxWidth/2, y - boxHeight/2, boxWidth, boxHeight);
-         ctx.fillStyle = textColor;
-         ctx.fillText(text, x, y);
+      processVideo();
+
+      const finishProcessing = async () => {
+          if (cancelled) return;
+          cancelled = true;
+          
+          videoElement?.pause();
+          
+          await videoEncoder?.flush();
+          await audioEncoder?.flush();
+          await muxer.finalize();
+
+          const { buffer } = muxer.target; 
+          const blob = new Blob([buffer], { type: 'video/mp4' });
+          
+          cleanup();
+          resolve({ blob, extension: 'mp4' });
       };
 
-      const drawVideoFrame = () => {
-          ctx.save();
-          applyFilters();
+    } catch (e: any) {
+      console.error(e);
+      cleanup();
+      reject(new Error("Lỗi xử lý video: " + e.message));
+    }
 
-          if (options.flipHorizontal) {
-              ctx.translate(width, 0);
-              ctx.scale(-1, 1);
-          }
-
-          const zoom = options.zoomLevel || 0;
-
-          if (zoom > 0) {
-              // POSITIVE ZOOM (Zoom In - Crop)
-              const sx = width * zoom / 2;
-              const sy = height * zoom / 2;
-              const sWidth = width * (1 - zoom);
-              const sHeight = height * (1 - zoom);
-              ctx.drawImage(videoElement, sx, sy, sWidth, sHeight, 0, 0, width, height);
-          } else {
-              // NEGATIVE ZOOM (Zoom Out - Shrink)
-              const scale = 1 + zoom; 
-              const dWidth = width * scale;
-              const dHeight = height * scale;
-              const dx = (width - dWidth) / 2; // Center X
-              const dy = (height - dHeight) / 2; // Center Y
-
-              // Draw video smaller inside the canvas
-              ctx.drawImage(videoElement, 0, 0, width, height, dx, dy, dWidth, dHeight);
-          }
-
-          ctx.restore();
-      };
-
-      let startTime: number | null = null;
-      try { await videoElement.play(); } catch (e) { console.error("Auto-play failed", e); }
-
-      const loop = async (timestamp: number) => {
-        if (!startTime) startTime = timestamp;
-        
-        if (videoElement.currentTime >= endTimeLimit || videoElement.ended) {
-          mediaRecorder.stop();
-          onProgress(100);
-          return;
-        }
-
-        if (options.enableMotionBlur) {
-            ctx.fillStyle = 'rgba(0,0,0,0.3)'; 
-            ctx.fillRect(0, 0, width, height);
-        } else {
-            ctx.fillStyle = '#000000'; // Black background for Negative Zoom
-            ctx.fillRect(0, 0, width, height);
-        }
-
-        drawVideoFrame();
-
-        if (options.filmGrainScore > 0 && noisePattern) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'overlay';
-            ctx.fillStyle = noisePattern;
-            const shiftX = Math.floor(Math.random() * 100);
-            const shiftY = Math.floor(Math.random() * 100);
-            ctx.translate(shiftX, shiftY);
-            ctx.fillRect(-shiftX, -shiftY, width + shiftX, height + shiftY);
-            ctx.restore();
-        }
-
-        if (options.enableVignette && vignetteGradient) {
-            ctx.save();
-            ctx.fillStyle = vignetteGradient;
-            ctx.fillRect(0, 0, width, height);
-            ctx.restore();
-        }
-
-        ctx.save();
-        ctx.filter = 'none';
-        ctx.setTransform(1, 0, 0, 1, 0, 0); 
-        const imgRatio = imageElement.width / imageElement.height;
-        const renderW = width;
-        const renderH = width / imgRatio;
-        const renderY = (height - renderH) / 2;
-        ctx.drawImage(imageElement, 0, renderY, renderW, renderH);
-        ctx.restore();
-
-        ctx.save();
-        ctx.filter = 'none';
-        ctx.setTransform(1, 0, 0, 1, 0, 0); 
-        drawTextOverlay();
-        ctx.restore();
-        
-        const currentPlayTime = (videoElement.currentTime - startTimeOffset);
-        const totalPlayTime = (endTimeLimit - startTimeOffset);
-        const videoProgress = (currentPlayTime / totalPlayTime) * 100;
-        onProgress(Math.min(videoProgress, 99.9));
-
-        requestAnimationFrame(loop);
-      };
-
-      requestAnimationFrame(loop);
-
-    } catch (error) {
-      reject(error);
+    function cleanup() {
+      cancelled = true;
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
+      if (videoElement) { videoElement.pause(); videoElement.src = ""; videoElement.remove(); }
+      if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
+      if (videoEncoder && videoEncoder.state !== 'closed') videoEncoder.close();
+      if (audioEncoder && audioEncoder.state !== 'closed') audioEncoder.close();
     }
   });
 };

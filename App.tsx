@@ -611,7 +611,7 @@ const App: React.FC = () => {
                                    {/* Change: Display detected extension if completed */}
                                    {video.status === 'completed' && (
                                      <span className="ml-1 uppercase px-1 bg-gray-200 rounded text-[9px] text-gray-600 font-bold">
-                                       {video.extension || 'WEBM'}
+                                       {video.extension || 'MP4'}
                                      </span>
                                    )}
                                 </div>
@@ -685,14 +685,16 @@ const App: React.FC = () => {
                    <a
                      href={selectedVideo.resultUrl}
                      // Change: Use the detected extension for download filename
-                     download={`shopee-studio-${selectedVideo.id}.${selectedVideo.extension || 'webm'}`}
+                     download={`shopee-studio-${selectedVideo.id}.${selectedVideo.extension || 'mp4'}`}
                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition shadow-lg shadow-green-100"
                    >
-                     <Download size={20} /> Tải Video Này {selectedVideo.extension ? `(${selectedVideo.extension.toUpperCase()})` : '(WEBM)'}
+                     <Download size={20} /> Tải Video Này {selectedVideo.extension ? `(${selectedVideo.extension.toUpperCase()})` : ''}
                    </a>
-                   <p className="text-[10px] text-gray-400 mt-2 text-center">
-                       Mẹo: File WebM upload tốt lên Shopee Video và TikTok.
-                   </p>
+                   {selectedVideo.extension === 'webm' && (
+                       <p className="text-[10px] text-red-500 mt-2 text-center">
+                           Lưu ý: Trình duyệt của bạn chỉ hỗ trợ xuất file WebM. Shopee Video hỗ trợ WebM, nhưng nếu gặp lỗi, hãy dùng phần mềm đổi đuôi sang MP4.
+                       </p>
+                   )}
                  </div>
               )}
             </div>
