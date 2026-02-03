@@ -178,7 +178,8 @@ const App: React.FC = () => {
         productTitle: extractedTitle || undefined
       } : v));
 
-      triggerAutoCaption(videoId, file, extractedTitle || undefined);
+      // Removed Auto Trigger
+      // triggerAutoCaption(videoId, file, extractedTitle || undefined);
 
     } catch (err: any) {
       setVideos(prev => prev.map(v => v.id === videoId ? { 
@@ -229,10 +230,11 @@ const App: React.FC = () => {
       productTitle: file.name.split('.')[0]
     }));
     setVideos(prev => [...prev, ...newItems]);
-
-    newItems.forEach(item => {
+    
+    // Removed Auto Trigger
+    /* newItems.forEach(item => {
         if(item.file) triggerAutoCaption(item.id, item.file, item.productTitle);
-    });
+    }); */
   };
 
   const handleImageSelect = (files: File[]) => {
@@ -263,7 +265,6 @@ const App: React.FC = () => {
       setSelectedVideoId(item.id);
 
       try {
-        // Change: Accept both blob and extension from processor
         const { blob, extension } = await processVideoWithThumbnail(
           item.file!,
           image.file!,
@@ -277,12 +278,12 @@ const App: React.FC = () => {
             ...v, 
             status: 'completed', 
             resultUrl: url, 
-            extension, // Save extension (mp4 or webm)
+            extension, 
             progress: 100 
         } : v));
       } catch (e) {
         console.error(e);
-        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi xử lý video' } : v));
+        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi: Hãy dùng Chrome/Edge bản mới' } : v));
       }
     }
 
@@ -294,6 +295,11 @@ const App: React.FC = () => {
   }
 
   const selectedVideo = videos.find(v => v.id === selectedVideoId);
+
+  // Generate random string for filename
+  const getRandomFilename = () => {
+     return Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+  };
 
   return (
     <div className="min-h-screen bg-orange-50/50 pb-12 flex flex-col">
@@ -579,13 +585,13 @@ const App: React.FC = () => {
 
           </div>
 
-          {/* MIDDLE COLUMN: Video Queue List */}
-          <div className="lg:col-span-3 flex flex-col h-[600px] lg:h-auto">
+          {/* MIDDLE COLUMN: Video Queue List - UPDATED HEIGHT FOR MOBILE */}
+          <div className="lg:col-span-3 flex flex-col h-auto max-h-[500px] lg:h-auto lg:max-h-none">
              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
                 <div className="p-4 border-b border-gray-100 bg-gray-50">
                    <h3 className="font-bold text-gray-800 flex items-center gap-2"><FileVideo size={18}/> Danh sách chờ</h3>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[200px]">
                    {videos.length === 0 ? (
                      <div className="h-full flex flex-col items-center justify-center text-gray-400 p-4 text-center">
                         <FileVideo size={32} className="mb-2 opacity-50"/>
@@ -610,7 +616,7 @@ const App: React.FC = () => {
                                    {video.duration ? `${Math.floor(video.duration)}s` : ''}
                                    {/* Change: Display detected extension if completed */}
                                    {video.status === 'completed' && (
-                                     <span className="ml-1 uppercase px-1 bg-gray-200 rounded text-[9px] text-gray-600 font-bold">
+                                     <span className="ml-1 uppercase px-1 bg-green-100 rounded text-[9px] text-green-700 font-bold border border-green-200">
                                        {video.extension || 'MP4'}
                                      </span>
                                    )}
@@ -684,29 +690,29 @@ const App: React.FC = () => {
                  <div className="mt-4 pt-4 border-t border-gray-100">
                    <a
                      href={selectedVideo.resultUrl}
-                     // Change: Use the detected extension for download filename
-                     download={`shopee-studio-${selectedVideo.id}.${selectedVideo.extension || 'mp4'}`}
+                     // Change: Randomize filename completely
+                     download={`${getRandomFilename()}.${selectedVideo.extension || 'mp4'}`}
                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold transition shadow-lg shadow-green-100"
                    >
                      <Download size={20} /> Tải Video Này {selectedVideo.extension ? `(${selectedVideo.extension.toUpperCase()})` : ''}
                    </a>
                    {selectedVideo.extension === 'webm' && (
                        <p className="text-[10px] text-red-500 mt-2 text-center">
-                           Lưu ý: Trình duyệt của bạn chỉ hỗ trợ xuất file WebM. Shopee Video hỗ trợ WebM, nhưng nếu gặp lỗi, hãy dùng phần mềm đổi đuôi sang MP4.
+                           Lưu ý: Trình duyệt của bạn chỉ hỗ trợ xuất file WebM.
                        </p>
                    )}
                  </div>
               )}
             </div>
 
-            {/* AI Caption Section - AUTOMATED */}
+            {/* AI Caption Section - UPDATED: MANUAL TRIGGER */}
             {selectedVideo && (selectedVideo.status === 'idle' || selectedVideo.status === 'completed' || selectedVideo.status === 'processing') && (
               <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl shadow-sm border border-indigo-100 p-5">
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
                        <Wand2 size={20} className="text-indigo-600" /> AI Caption
                     </h2>
-                    {!selectedVideo.isGeneratingCaption && (
+                    {selectedVideo.generatedCaption && (
                         <button 
                             onClick={() => handleRegenerateCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
                             className="p-1.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-full transition"
@@ -752,8 +758,14 @@ const App: React.FC = () => {
                        </button>
                      </div>
                    ) : (
-                     <div className="text-center py-6 bg-white/50 rounded-xl border border-dashed border-indigo-200 text-indigo-400 text-sm">
-                        Đang đợi video...
+                     <div className="text-center py-6 bg-white/50 rounded-xl border border-dashed border-indigo-200 text-indigo-400 text-sm flex flex-col items-center gap-3">
+                        <p>Chưa có caption.</p>
+                        <button 
+                            onClick={() => handleRegenerateCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
+                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                        >
+                           <Sparkles size={16} /> Viết Caption
+                        </button>
                      </div>
                    )}
                 </div>
