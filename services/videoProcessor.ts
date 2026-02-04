@@ -111,27 +111,10 @@ export const processVideoWithThumbnail = async (
       
       const duration = endTimeLimit - startTimeOffset;
 
-      // 4. Set Dimensions & UPSCALE LOGIC
-      const sourceWidth = videoElement.videoWidth;
-      const sourceHeight = videoElement.videoHeight;
-      
-      // Target Resolution: Ensure at least 720p on the shortest side for "HD" quality
-      const MIN_SHORT_SIDE = 720;
-      let width = sourceWidth;
-      let height = sourceHeight;
-      
-      const currentShortSide = Math.min(width, height);
-      // Upscale if input is smaller than 720p (e.g. 480p, 576p)
-      if (currentShortSide < MIN_SHORT_SIDE) {
-          const scaleFactor = MIN_SHORT_SIDE / currentShortSide;
-          width = Math.round(width * scaleFactor);
-          height = Math.round(height * scaleFactor);
-          console.log(`Auto Upscaling video from ${sourceWidth}x${sourceHeight} to ${width}x${height}`);
-      }
-
-      // Ensure dimensions are even for H.264
-      if (width % 2 !== 0) width -= 1;
-      if (height % 2 !== 0) height -= 1;
+      // 4. Set Dimensions - FIXED 9:16 RESOLUTION (1080x1920)
+      // This is the standard for Shopee Video / TikTok
+      const width = 1080;
+      const height = 1920;
       
       const fps = 30; 
 
@@ -162,8 +145,8 @@ export const processVideoWithThumbnail = async (
         codec: 'avc1.4d002a', // H.264 Main Profile Level 4.2
         width: width,
         height: height,
-        // High quality bitrate: ~3.6Mbps for 720p, ~8Mbps for 1080p
-        bitrate: Math.min(width * height * 4, 10_000_000), 
+        // High quality bitrate for 1080p: ~10Mbps
+        bitrate: 10_000_000, 
         framerate: fps
       });
 
@@ -272,7 +255,7 @@ export const processVideoWithThumbnail = async (
                  return;
              }
 
-             // Background
+             // Background (Black bars)
              ctx.fillStyle = '#000000';
              ctx.fillRect(0, 0, width, height);
 
@@ -287,36 +270,29 @@ export const processVideoWithThumbnail = async (
              }
              ctx.filter = filterString || 'none';
 
-             // Draw Video Frame (With Source/Dest Scaling)
+             // Draw Video Frame (CENTERED & SCALED)
              ctx.save();
              if (options.flipHorizontal) {
                  ctx.translate(width, 0); ctx.scale(-1, 1);
              }
              
-             const zoom = options.zoomLevel || 0;
-             if (zoom > 0) {
-                 // Zoom IN (Cropping Logic)
-                 // We calculate the source crop area based on original dimensions
-                 const sW = sourceWidth * (1 - zoom);
-                 const sH = sourceHeight * (1 - zoom);
-                 const sX = (sourceWidth - sW) / 2;
-                 const sY = (sourceHeight - sH) / 2;
-                 
-                 // Draw cropped source to full destination (upscaled) canvas
-                 ctx.drawImage(videoElement!, sX, sY, sW, sH, 0, 0, width, height);
-             } else {
-                 // Zoom OUT or Normal
-                 const scale = 1 + zoom; // e.g. 1.0 or 0.8
-                 
-                 // Calculate Destination draw area
-                 const dW = width * scale;
-                 const dH = height * scale;
-                 const dX = (width - dW) / 2;
-                 const dY = (height - dH) / 2;
+             // Calculate scale to fit video into 1080 width
+             const videoAspect = videoElement!.videoWidth / videoElement!.videoHeight;
+             // Default strategy: Fit Width (1080)
+             let drawWidth = width;
+             let drawHeight = width / videoAspect;
+             
+             // Apply Zoom (Scale from center)
+             // zoomLevel 0 means fit width. Positive zooms in, negative zooms out.
+             const scaleMultiplier = 1 + options.zoomLevel;
+             drawWidth *= scaleMultiplier;
+             drawHeight *= scaleMultiplier;
 
-                 // Draw full source to calculated destination
-                 ctx.drawImage(videoElement!, 0, 0, sourceWidth, sourceHeight, dX, dY, dW, dH);
-             }
+             // Center the video
+             const dx = (width - drawWidth) / 2;
+             const dy = (height - drawHeight) / 2;
+
+             ctx.drawImage(videoElement!, dx, dy, drawWidth, drawHeight);
              ctx.restore();
 
              // Draw Effects
@@ -330,16 +306,15 @@ export const processVideoWithThumbnail = async (
                  ctx.fillStyle = vignetteGradient; ctx.fillRect(0, 0, width, height);
              }
 
-             // Draw Thumbnail Image
+             // Draw Thumbnail Image (COVER/FRAME)
+             // Force Stretch to fill 1080x1920 (Fixed Frame)
              ctx.filter = 'none';
-             const imgRatio = imageElement.width / imageElement.height;
-             const renderH = width / imgRatio;
-             ctx.drawImage(imageElement, 0, (height - renderH)/2, width, renderH);
+             ctx.drawImage(imageElement, 0, 0, width, height);
 
              // Draw Text Overlay
              if (options.textOverlay.enabled && options.textOverlay.text) {
                  const { text, position, backgroundColor, textColor } = options.textOverlay;
-                 const fontSize = height * 0.05;
+                 const fontSize = height * 0.04; // 4% of height
                  ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
                  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                  const tm = ctx.measureText(text);
