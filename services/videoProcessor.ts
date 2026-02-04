@@ -85,11 +85,28 @@ export const processVideoWithThumbnail = async (
       // 3. Trimming Logic
       const originalDuration = videoElement.duration;
       const startTimeOffset = options.trimStart || 0;
-      const endTimeLimit = (options.trimEnd > 0 && options.trimEnd < originalDuration) 
+
+      // FIX: Handle default trimming logic and Safety Buffer
+      // If trimEnd is 0 or invalid, use original duration
+      let requestedEnd = (options.trimEnd > 0 && options.trimEnd <= originalDuration) 
                            ? options.trimEnd 
                            : originalDuration;
       
-      if (startTimeOffset >= endTimeLimit) throw new Error("Thời gian bắt đầu cắt phải nhỏ hơn thời gian kết thúc.");
+      // CRITICAL FIX: Subtract a small safety buffer (0.15s) from the end.
+      // WebCodecs often hangs if we try to read exactly to the last microsecond of the stream (AudioReader hangs).
+      // This ensures we finish processing cleanly before the stream dries up.
+      if (requestedEnd > originalDuration - 0.2) {
+          requestedEnd = Math.max(0, originalDuration - 0.2);
+      }
+
+      const endTimeLimit = requestedEnd;
+      
+      if (startTimeOffset >= endTimeLimit) {
+         if (originalDuration < 0.5) throw new Error("Video quá ngắn để xử lý.");
+         // Auto adjust start if needed or throw
+         throw new Error(`Thời gian lỗi: Bắt đầu (${startTimeOffset}s) >= Kết thúc (${endTimeLimit.toFixed(2)}s). Vui lòng kiểm tra lại.`);
+      }
+      
       const duration = endTimeLimit - startTimeOffset;
 
       // 4. Set Dimensions & FPS

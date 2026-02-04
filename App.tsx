@@ -59,18 +59,25 @@ const App: React.FC = () => {
     }
   }, [videos, selectedVideoId]);
 
-  // Load duration when video loaded to help trim slider
+  // Load duration when video loaded or selected to help trim slider
   useEffect(() => {
     const vid = videos.find(v => v.id === selectedVideoId);
-    if (vid?.file && !vid.duration) {
+    if (!vid) return;
+
+    if (vid.file && !vid.duration) {
       const videoEl = document.createElement('video');
       videoEl.src = URL.createObjectURL(vid.file);
       videoEl.onloadedmetadata = () => {
-         setVideos(prev => prev.map(v => v.id === vid.id ? { ...v, duration: videoEl.duration } : v));
-         if (config.trimEnd === 0) setConfig(c => ({...c, trimEnd: videoEl.duration }));
+         const duration = videoEl.duration;
+         setVideos(prev => prev.map(v => v.id === vid.id ? { ...v, duration } : v));
+         // Update config trimEnd to match the new video duration
+         setConfig(c => ({...c, trimEnd: duration, trimStart: 0 }));
       };
+    } else if (vid.duration) {
+        // If we switch to a video that already has duration, update the config display
+        setConfig(c => ({...c, trimEnd: vid.duration!, trimStart: 0 }));
     }
-  }, [selectedVideoId, videos]);
+  }, [selectedVideoId]); // Only trigger when selected video changes
 
   // --- LOGIC: Fetch Video & Title ---
   const extractVideoUrlFromHtml = (html: string): string | null => {
