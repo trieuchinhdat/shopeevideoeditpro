@@ -6,6 +6,7 @@ import { processVideoWithThumbnail } from './services/videoProcessor';
 import { generateShopeeCaption } from './services/aiService';
 import { VideoItem, ImageState, ProcessingStatus, ProcessOptions } from './types';
 import { Play, Download, Loader2, Sparkles, AlertCircle, CheckCircle2, Link as LinkIcon, FileVideo, Search, Info, Trash2, Plus, XCircle, Copy, Wand2, Eye, RefreshCw, Sliders, Volume2, Maximize, FlipHorizontal, Zap, Palette, Scissors, Type, LayoutTemplate, ZoomIn, Aperture, Hash } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
 
 const App: React.FC = () => {
   // State for list of videos
@@ -237,11 +238,6 @@ const App: React.FC = () => {
       productTitle: file.name.split('.')[0]
     }));
     setVideos(prev => [...prev, ...newItems]);
-    
-    // Removed Auto Trigger
-    /* newItems.forEach(item => {
-        if(item.file) triggerAutoCaption(item.id, item.file, item.productTitle);
-    }); */
   };
 
   const handleImageSelect = (files: File[]) => {
@@ -288,9 +284,17 @@ const App: React.FC = () => {
             extension, 
             progress: 100 
         } : v));
+
+        // SHOW NOTIFICATION (Sonner)
+        toast.success(`Đã xong: ${item.name}`, {
+           description: 'Video đã được xử lý và sẵn sàng tải xuống.',
+           duration: 3000
+        });
+
       } catch (e) {
         console.error(e);
         setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi: Hãy dùng Chrome/Edge bản mới' } : v));
+        toast.error('Lỗi xử lý video', { description: 'Vui lòng kiểm tra lại file hoặc thử trình duyệt Chrome mới nhất.' });
       }
     }
 
@@ -311,6 +315,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-orange-50/50 pb-12 flex flex-col">
       <Header />
+      <Toaster position="top-right" richColors />
 
       <main className="max-w-7xl mx-auto px-4 py-6 w-full flex-1">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
@@ -669,7 +674,7 @@ const App: React.FC = () => {
               <div className="flex-1 bg-black/5 rounded-2xl border-2 border-dashed border-gray-200 overflow-hidden relative flex items-center justify-center min-h-[300px]">
                 {selectedVideo ? (
                    selectedVideo.resultUrl ? (
-                      <video src={selectedVideo.resultUrl} controls className="h-full w-full object-contain bg-black" autoPlay />
+                      <video src={selectedVideo.resultUrl} controls className="h-full w-full object-contain bg-black" />
                    ) : selectedVideo.file ? (
                       <div className="relative w-full h-full flex flex-col">
                          <div className="flex-1 flex items-center justify-center bg-black">
