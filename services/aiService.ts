@@ -47,7 +47,7 @@ export const generateShopeeCaption = async (videoFile: File, productName?: strin
        - Hãy thay bằng: "Hỗ trợ", "Cải thiện", "Top đầu", "Giúp".
 
     🚨 **YÊU CẦU BẮT BUỘC:**
-    1. **Độ dài tối đa:** Tổng cộng KHÔNG ĐƯỢC VƯỢT QUÁ 150 ký tự (bao gồm cả khoảng trắng và hashtag).
+    1. **Độ dài TỐI ĐA:** Tổng cộng **PHẢI DƯỚI 140 KÝ TỰ** (bao gồm cả khoảng trắng và hashtag). Đây là yêu cầu quan trọng nhất.
     2. **Số lượng Hashtag:** Sử dụng CHÍNH XÁC 5 hashtag ở cuối.
     3. **Hashtag bắt buộc:** Phải bao gồm #ShopeeCreator #LuotVuiMuaLien #ShopeeVideo
     4. **Hashtag bổ sung:** Thêm 2 hashtag liên quan nhất đến sản phẩm.
