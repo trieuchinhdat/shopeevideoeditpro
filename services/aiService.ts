@@ -25,18 +25,16 @@ export const generateShopeeCaption = async (videoFile: File, productName?: strin
 
     // STRICT SIZE CHECK for Inline Data
     // Gemini API inline data limit is ~20MB payload. 
-    // Base64 encoding adds ~33% overhead. 
-    // 10MB file -> ~13.3MB base64 (Safe).
-    // 15MB file -> ~20MB base64 (Risky/Fail).
-    // We set limit to 9.5MB to be safe.
+    // We set limit to 9.5MB to be safe and avoid 400 Bad Request errors.
     if (videoFile.size > 9.5 * 1024 * 1024) {
         return "File video quá lớn (>9.5MB). API Google hạn chế dung lượng gửi trực tiếp. Vui lòng nén video hoặc chọn video ngắn hơn (< 45s).";
     }
 
     // Convert video to base64 for inline transfer
     const videoBase64 = await fileToGenerativePart(videoFile);
+    const mimeType = videoFile.type || 'video/mp4';
 
-    // Enhanced Prompt for High-Conversion Sales Copy - SINGLE OPTION
+    // Enhanced Prompt with Safety Rules
     const promptText = `Bạn là Content Creator triệu view trên Shopee Video. Hãy viết **DUY NHẤT 01 CAPTION** bán hàng ngắn gọn cho video này.
 
     ${productName ? `Sản phẩm: "${productName}"` : ""}
@@ -63,40 +61,52 @@ export const generateShopeeCaption = async (videoFile: File, productName?: strin
     - Viết tắt nếu cần để đảm bảo ngắn gọn.
     `;
 
-    // Determine correct mime type, default to mp4 if missing
-    // Gemini supports: video/mp4, video/mpeg, video/mov, video/avi, video/x-flv, video/mpg, video/webm, video/wmv, video/3gpp
-    const mimeType = videoFile.type || 'video/mp4';
+    // FALLBACK STRATEGY
+    // 1. Try 'gemini-3-pro-preview' (Best Quality)
+    // 2. If Rate Limit (429) or Service Unavailable (503), fallback to 'gemini-flash-latest' (High Quota, Fast)
+    const modelsToTry = ['gemini-3-pro-preview', 'gemini-flash-latest'];
+    let lastError: any = null;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: {
-        parts: [
-          { 
-            inlineData: { 
-              mimeType: mimeType, 
-              data: videoBase64 
-            } 
-          },
-          { text: promptText }
-        ]
-      },
-      // Config: removed thinkingConfig as it can cause 400s with video inputs on some previews
-      config: {
-        temperature: 0.7,
-      }
-    });
+    for (const model of modelsToTry) {
+        try {
+            const response = await ai.models.generateContent({
+                model: model,
+                contents: {
+                    parts: [
+                        { inlineData: { mimeType: mimeType, data: videoBase64 } },
+                        { text: promptText }
+                    ]
+                },
+                config: {
+                    temperature: 0.7,
+                }
+            });
+            return response.text || "Không thể phân tích video lúc này (Phản hồi trống).";
+        } catch (error: any) {
+            lastError = error;
+            const msg = error.message || "";
+            // Only fallback if it's a capacity issue (429, 503)
+            if (msg.includes("429") || msg.includes("503")) {
+                console.warn(`Model ${model} bị quá tải (Rate Limit). Đang thử model dự phòng...`);
+                continue; // Try next model
+            }
+            // If it's a 400 (Bad Request) or 403 (Permission), stop immediately as changing model won't help content errors.
+            break;
+        }
+    }
 
-    return response.text || "Không thể phân tích video lúc này (Phản hồi trống).";
+    throw lastError;
+
   } catch (error: any) {
     console.error("AI Generation Error:", error);
     
     // Provide more specific error messages to the user
     let errorMessage = error.message || "Lỗi không xác định";
     
-    if (errorMessage.includes("400")) return "Lỗi 400: Video quá lớn hoặc định dạng không được hỗ trợ bởi model này. Thử video nhỏ hơn.";
-    if (errorMessage.includes("403")) return "Lỗi 403: API Key không có quyền truy cập Model này hoặc bị giới hạn vùng.";
-    if (errorMessage.includes("429")) return "Lỗi 429: Quá tải hệ thống (Rate Limit). Vui lòng thử lại sau.";
-    if (errorMessage.includes("500")) return "Lỗi 500: Server Google AI đang bảo trì. Thử lại sau.";
+    if (errorMessage.includes("400")) return "Lỗi 400: Video quá lớn hoặc định dạng không được hỗ trợ. Hãy thử video < 9MB.";
+    if (errorMessage.includes("403")) return "Lỗi 403: API Key sai hoặc bị giới hạn quyền truy cập.";
+    if (errorMessage.includes("429")) return "Lỗi 429: Hệ thống đang quá tải. Vui lòng chờ 30s rồi thử lại.";
+    if (errorMessage.includes("500")) return "Lỗi 500: Server Google AI đang bảo trì.";
     
     return `Lỗi kết nối AI: ${errorMessage}`;
   }
