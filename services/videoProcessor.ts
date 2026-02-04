@@ -24,6 +24,7 @@ declare class AudioEncoder {
 declare class VideoFrame {
   constructor(source: CanvasImageSource, init?: { timestamp: number });
   close(): void;
+  timestamp: number;
 }
 
 declare class AudioData {
@@ -31,6 +32,7 @@ declare class AudioData {
   copyTo(destination: any, options: { planeIndex: number }): void;
   close(): void;
   timestamp: number;
+  duration: number;
   numberOfFrames: number;
   numberOfChannels: number;
   sampleRate: number;
@@ -55,6 +57,7 @@ export const processVideoWithThumbnail = async (
     // Variables for cleanup need to be in this scope
     let videoUrl: string | null = null;
     let imageUrl: string | null = null;
+    let audioReader: any = null;
 
     try {
       // 1. Check Browser Support
@@ -69,9 +72,12 @@ export const processVideoWithThumbnail = async (
       videoElement = document.createElement('video');
       videoElement.src = videoUrl;
       videoElement.crossOrigin = 'anonymous';
-      videoElement.muted = false; 
+      videoElement.muted = false; // Important: Must not be muted to capture audio
       videoElement.volume = 1.0;  
       videoElement.preload = 'auto';
+      // Important hack: Attach to DOM (hidden) to ensure consistent audio scheduling in some browsers
+      videoElement.style.display = 'none';
+      document.body.appendChild(videoElement);
 
       const imageElement = new Image();
       imageElement.src = imageUrl;
@@ -93,8 +99,6 @@ export const processVideoWithThumbnail = async (
                            : originalDuration;
       
       // CRITICAL FIX: Subtract a small safety buffer (0.15s) from the end.
-      // WebCodecs often hangs if we try to read exactly to the last microsecond of the stream (AudioReader hangs).
-      // This ensures we finish processing cleanly before the stream dries up.
       if (requestedEnd > originalDuration - 0.2) {
           requestedEnd = Math.max(0, originalDuration - 0.2);
       }
@@ -103,7 +107,6 @@ export const processVideoWithThumbnail = async (
       
       if (startTimeOffset >= endTimeLimit) {
          if (originalDuration < 0.5) throw new Error("Video quá ngắn để xử lý.");
-         // Auto adjust start if needed or throw
          throw new Error(`Thời gian lỗi: Bắt đầu (${startTimeOffset}s) >= Kết thúc (${endTimeLimit.toFixed(2)}s). Vui lòng kiểm tra lại.`);
       }
       
@@ -132,7 +135,7 @@ export const processVideoWithThumbnail = async (
           sampleRate: 44100 
         },
         fastStart: 'in-memory',
-        firstTimestampBehavior: 'offset'
+        firstTimestampBehavior: 'offset' // Critical: Syncs Audio (starts at 0) and Video (starts at trimStart)
       });
 
       // 6. Init Video Encoder
@@ -145,7 +148,7 @@ export const processVideoWithThumbnail = async (
         codec: 'avc1.4d002a', // H.264 Main Profile Level 4.2
         width: width,
         height: height,
-        bitrate: Math.min(width * height * 4, 10_000_000), // Higher quality bitrate (up to 10Mbps)
+        bitrate: Math.min(width * height * 4, 10_000_000), // Higher quality bitrate
         framerate: fps
       });
 
@@ -197,9 +200,13 @@ export const processVideoWithThumbnail = async (
 
       // 9. Prepare Audio Processing Pipeline
       audioCtx = new AudioContext({ sampleRate: 44100 });
+      if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+      }
+
       const source = audioCtx.createMediaElementSource(videoElement);
       const gainNode = audioCtx.createGain();
-      gainNode.gain.value = options.volume;
+      gainNode.gain.value = options.volume; // Apply volume
       const destination = audioCtx.createMediaStreamDestination();
       source.connect(gainNode);
       gainNode.connect(destination);
@@ -207,7 +214,7 @@ export const processVideoWithThumbnail = async (
       const audioTrack = destination.stream.getAudioTracks()[0];
       // @ts-ignore
       const trackProcessor = new MediaStreamTrackProcessor({ track: audioTrack });
-      const audioReader = trackProcessor.readable.getReader();
+      audioReader = trackProcessor.readable.getReader();
 
       // --- PROCESSING LOOP ---
       videoElement.currentTime = startTimeOffset;
@@ -219,41 +226,25 @@ export const processVideoWithThumbnail = async (
       let lastKeyFrame = -100;
       
       // Audio Loop (Async)
+      // FIX: Simplification - Pass AudioData directly to Encoder
+      // Since video starts at 'startTimeOffset' and AudioContext starts capturing "now",
+      // The content aligns naturally. The Muxer 'firstTimestampBehavior: offset' handles timestamp alignment.
       const processAudio = async () => {
          while (!cancelled) {
             const { value, done } = await audioReader.read();
             if (done || cancelled) break;
             
             if (value) {
-                const timestampSec = value.timestamp / 1e6;
-                // Trim logic for audio
-                if (timestampSec < startTimeOffset) {
-                    value.close();
-                    continue;
-                }
-                if (timestampSec > endTimeLimit) {
+                // If video has passed the end time, stop encoding audio
+                if (videoElement && videoElement.currentTime > endTimeLimit) {
                     value.close();
                     break;
                 }
-
-                const relativeTimestamp = Math.max(0, value.timestamp - (startTimeOffset * 1_000_000));
                 
-                // CORRECT COPYING LOGIC
-                const size = value.allocationSize({ planeIndex: 0 });
-                const buffer = new ArrayBuffer(size);
-                value.copyTo(buffer, { planeIndex: 0 });
-                
-                const newAudioData = new AudioData({
-                    format: value.format,
-                    sampleRate: value.sampleRate,
-                    numberOfFrames: value.numberOfFrames,
-                    numberOfChannels: value.numberOfChannels,
-                    timestamp: relativeTimestamp,
-                    data: buffer,
-                });
-
-                audioEncoder!.encode(newAudioData);
-                newAudioData.close();
+                // Directly encode. 
+                // Don't modify timestamps manually (AudioData is read-only).
+                // Muxer handles sync via track offsets.
+                audioEncoder!.encode(value);
                 value.close();
             }
          }
@@ -272,9 +263,11 @@ export const processVideoWithThumbnail = async (
                  return;
              }
 
+             // Background
              ctx.fillStyle = '#000000';
              ctx.fillRect(0, 0, width, height);
 
+             // Apply Filter to Context
              let filterString = '';
              switch (options.colorFilter) {
                  case 'bright': filterString += 'brightness(1.1) saturate(1.15) '; break;
@@ -285,6 +278,7 @@ export const processVideoWithThumbnail = async (
              }
              ctx.filter = filterString || 'none';
 
+             // Draw Video Frame
              ctx.save();
              if (options.flipHorizontal) {
                  ctx.translate(width, 0); ctx.scale(-1, 1);
@@ -300,6 +294,7 @@ export const processVideoWithThumbnail = async (
              }
              ctx.restore();
 
+             // Draw Effects
              if (options.enableMotionBlur) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, width, height); }
              if (options.filmGrainScore > 0 && noisePattern) {
                  ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = noisePattern;
@@ -310,11 +305,13 @@ export const processVideoWithThumbnail = async (
                  ctx.fillStyle = vignetteGradient; ctx.fillRect(0, 0, width, height);
              }
 
+             // Draw Thumbnail Image
              ctx.filter = 'none';
              const imgRatio = imageElement.width / imageElement.height;
              const renderH = width / imgRatio;
              ctx.drawImage(imageElement, 0, (height - renderH)/2, width, renderH);
 
+             // Draw Text Overlay
              if (options.textOverlay.enabled && options.textOverlay.text) {
                  const { text, position, backgroundColor, textColor } = options.textOverlay;
                  const fontSize = height * 0.05;
@@ -328,6 +325,7 @@ export const processVideoWithThumbnail = async (
                  ctx.fillStyle = textColor; ctx.fillText(text, tx, ty);
              }
 
+             // Encode Frame
              const timestamp = currentTime * 1_000_000;
              const frame = new VideoFrame(canvas, { timestamp });
              
@@ -337,6 +335,7 @@ export const processVideoWithThumbnail = async (
              videoEncoder!.encode(frame, { keyFrame: needsKeyFrame });
              frame.close();
 
+             // Update Progress
              const progress = ((currentTime - startTimeOffset) / duration) * 100;
              onProgress(Math.min(progress, 99));
 
@@ -385,7 +384,12 @@ export const processVideoWithThumbnail = async (
       cancelled = true;
       if (videoUrl) URL.revokeObjectURL(videoUrl);
       if (imageUrl) URL.revokeObjectURL(imageUrl);
-      if (videoElement) { videoElement.pause(); videoElement.src = ""; videoElement.remove(); }
+      if (videoElement) { 
+          videoElement.pause(); 
+          videoElement.src = ""; 
+          videoElement.remove(); 
+      }
+      if (audioReader) audioReader.cancel();
       if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
       if (videoEncoder && videoEncoder.state !== 'closed') videoEncoder.close();
       if (audioEncoder && audioEncoder.state !== 'closed') audioEncoder.close();
