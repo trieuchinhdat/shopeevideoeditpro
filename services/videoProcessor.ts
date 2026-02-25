@@ -42,7 +42,7 @@ declare class AudioData {
 
 export const processVideoWithThumbnail = async (
   videoFile: File,
-  imageFile: File,
+  imageFile: File | null,
   options: ProcessOptions,
   onProgress: (progress: number) => void
 ): Promise<{ blob: Blob; extension: string }> => {
@@ -67,7 +67,9 @@ export const processVideoWithThumbnail = async (
 
       // 2. Load Assets
       videoUrl = URL.createObjectURL(videoFile);
-      imageUrl = URL.createObjectURL(imageFile);
+      if (imageFile) {
+          imageUrl = URL.createObjectURL(imageFile);
+      }
 
       videoElement = document.createElement('video');
       videoElement.src = videoUrl;
@@ -79,16 +81,24 @@ export const processVideoWithThumbnail = async (
       videoElement.style.display = 'none';
       document.body.appendChild(videoElement);
 
-      const imageElement = new Image();
-      imageElement.src = imageUrl;
-      imageElement.crossOrigin = 'anonymous';
+      let imageElement: HTMLImageElement | null = null;
+      if (imageUrl) {
+          imageElement = new Image();
+          imageElement.src = imageUrl;
+          imageElement.crossOrigin = 'anonymous';
+      }
 
-      await Promise.all([
-        new Promise((r, j) => { videoElement!.onloadedmetadata = r; videoElement!.onerror = j; }),
-        new Promise((r, j) => { imageElement.onload = r; imageElement.onerror = j; })
-      ]);
+      const promises: Promise<any>[] = [
+        new Promise((r, j) => { videoElement!.onloadedmetadata = r; videoElement!.onerror = j; })
+      ];
+      
+      if (imageElement) {
+          promises.push(new Promise((r, j) => { imageElement!.onload = r; imageElement!.onerror = j; }));
+      }
 
-      // 3. Trimming Logic
+      await Promise.all(promises);
+
+      // 3. Trimming & Segmentation Logic
       const originalDuration = videoElement.duration;
       const startTimeOffset = options.trimStart || 0;
 
@@ -109,7 +119,30 @@ export const processVideoWithThumbnail = async (
          throw new Error(`Thời gian lỗi: Bắt đầu (${startTimeOffset}s) >= Kết thúc (${endTimeLimit.toFixed(2)}s). Vui lòng kiểm tra lại.`);
       }
       
-      const duration = endTimeLimit - startTimeOffset;
+      const totalDuration = endTimeLimit - startTimeOffset;
+
+      // Define Segments
+      let segments: { start: number; end: number }[] = [];
+      if (options.enableAutoReorder) {
+          // Split into ~3s chunks
+          const chunkDuration = 3.0;
+          let current = startTimeOffset;
+          while (current < endTimeLimit) {
+              const end = Math.min(current + chunkDuration, endTimeLimit);
+              segments.push({ start: current, end });
+              current = end;
+          }
+          
+          // Simple Shuffle: Swap adjacent pairs (0-1, 2-3, etc.)
+          // This breaks the hash but keeps some flow
+          for (let i = 0; i < segments.length - 1; i += 2) {
+              const temp = segments[i];
+              segments[i] = segments[i+1];
+              segments[i+1] = temp;
+          }
+      } else {
+          segments = [{ start: startTimeOffset, end: endTimeLimit }];
+      }
 
       // 4. Set Dimensions - FIXED 9:16 RESOLUTION (1080x1920)
       // This is the standard for Shopee Video / TikTok
@@ -132,7 +165,7 @@ export const processVideoWithThumbnail = async (
           sampleRate: 44100 
         },
         fastStart: 'in-memory',
-        firstTimestampBehavior: 'offset' // Syncs Audio (starts at 0) and Video (starts at trimStart)
+        firstTimestampBehavior: 'offset' 
       });
 
       // 6. Init Video Encoder
@@ -215,147 +248,234 @@ export const processVideoWithThumbnail = async (
       audioReader = trackProcessor.readable.getReader();
 
       // --- PROCESSING LOOP ---
-      videoElement.currentTime = startTimeOffset;
       videoElement.playbackRate = options.speed || 1.0;
       
-      // Start processing when video plays
-      await videoElement.play();
-
-      let lastKeyFrame = -100;
+      // Global time tracking for the output video
+      let outputTimestamp = 0; 
+      let segmentIndex = 0;
       
-      // Audio Loop (Async)
-      const processAudio = async () => {
-         while (!cancelled) {
-            const { value, done } = await audioReader.read();
-            if (done || cancelled) break;
-            
-            if (value) {
-                // If video has passed the end time, stop encoding audio
-                if (videoElement && videoElement.currentTime > endTimeLimit) {
-                    value.close();
-                    break;
-                }
-                
-                audioEncoder!.encode(value);
-                value.close();
-            }
-         }
+      // Helper to process segments sequentially
+      const processSegments = async () => {
+          for (const segment of segments) {
+              if (cancelled) break;
+              
+              // 1. Seek to segment start
+              videoElement!.currentTime = segment.start;
+              // Wait for seek to complete (simple delay usually enough for local blobs, but event is safer)
+              await new Promise(r => {
+                  const onSeeked = () => {
+                      videoElement!.removeEventListener('seeked', onSeeked);
+                      r(null);
+                  };
+                  videoElement!.addEventListener('seeked', onSeeked);
+                  // Force seek event if already there? No, setting currentTime triggers it.
+              });
+              
+              // 2. Play
+              await videoElement!.play();
+              
+              // 3. Process Loop for this segment
+              let segmentFinished = false;
+              
+              // We need a promise that resolves when this segment is done
+              await new Promise<void>((resolveSegment) => {
+                  
+                  const segmentDuration = segment.end - segment.start;
+                  // Track audio for this segment
+                  const segmentAudioLoop = async () => {
+                      while (!segmentFinished && !cancelled) {
+                          const { value, done } = await audioReader.read();
+                          if (done || cancelled) break;
+                          
+                          if (value) {
+                              // Check if we are past segment end
+                              if (videoElement!.currentTime >= segment.end) {
+                                  value.close();
+                                  break;
+                              }
+                              
+                              // Rewrite Timestamp
+                              // Original timestamp is relative to video start (e.g. 5s)
+                              // We need it relative to outputTimestamp
+                              // But AudioData timestamp is in microseconds
+                              
+                              // Calculate relative time in segment
+                              const relativeTime = value.timestamp - (segment.start * 1_000_000);
+                              
+                              // New timestamp
+                              const newTimestamp = outputTimestamp + relativeTime;
+                              
+                              // Copy Audio Data to new buffer
+                              const size = value.allocationSize({planeIndex: 0});
+                              const buffer = new Uint8Array(size);
+                              value.copyTo(buffer, { planeIndex: 0 });
+                              
+                              // Create new AudioData with new timestamp
+                              const newAudioData = new AudioData({
+                                  format: value.format,
+                                  sampleRate: value.sampleRate,
+                                  numberOfFrames: value.numberOfFrames,
+                                  numberOfChannels: value.numberOfChannels,
+                                  timestamp: newTimestamp,
+                                  data: buffer
+                              });
+                              
+                              audioEncoder!.encode(newAudioData);
+                              value.close();
+                              newAudioData.close();
+                          }
+                      }
+                  };
+                  segmentAudioLoop().catch(console.error);
+
+                  const drawFrame = () => {
+                      if (cancelled || segmentFinished) return;
+                      
+                      const currentTime = videoElement!.currentTime;
+                      
+                      if (currentTime >= segment.end || videoElement!.ended) {
+                          segmentFinished = true;
+                          // Update output timestamp for next segment
+                          // We use the actual duration processed
+                          outputTimestamp += (segment.end - segment.start) * 1_000_000;
+                          resolveSegment();
+                          return;
+                      }
+
+                      // Background (Black bars)
+                      ctx.fillStyle = '#000000';
+                      ctx.fillRect(0, 0, width, height);
+
+                      // Apply Filter to Context
+                      let filterString = '';
+                      switch (options.colorFilter) {
+                          case 'bright': filterString += 'brightness(1.1) saturate(1.15) '; break;
+                          case 'warm':   filterString += 'sepia(0.15) contrast(1.05) saturate(1.1) '; break;
+                          case 'cool':   filterString += 'hue-rotate(10deg) contrast(0.95) saturate(0.9) '; break;
+                          case 'contrast': filterString += 'contrast(1.3) saturate(1.2) '; break;
+                          case 'vintage': filterString += 'sepia(0.4) contrast(1.1) brightness(0.9) '; break;
+                      }
+                      ctx.filter = filterString || 'none';
+
+                      // Draw Video Frame (CENTERED & SCALED)
+                      ctx.save();
+                      if (options.flipHorizontal) {
+                          ctx.translate(width, 0); ctx.scale(-1, 1);
+                      }
+                      
+                      const videoAspect = videoElement!.videoWidth / videoElement!.videoHeight;
+                      let drawWidth = width;
+                      let drawHeight = width / videoAspect;
+                      
+                      const scaleMultiplier = 1 + options.zoomLevel;
+                      drawWidth *= scaleMultiplier;
+                      drawHeight *= scaleMultiplier;
+
+                      const dx = (width - drawWidth) / 2;
+                      const dy = (height - drawHeight) / 2;
+
+                      ctx.drawImage(videoElement!, dx, dy, drawWidth, drawHeight);
+                      ctx.restore();
+
+                      // Draw Effects
+                      if (options.enableMotionBlur) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, width, height); }
+                      if (options.filmGrainScore > 0 && noisePattern) {
+                          ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = noisePattern;
+                          ctx.translate(Math.random()*100, Math.random()*100); 
+                          ctx.fillRect(-100, -100, width+100, height+100); ctx.restore();
+                      }
+                      if (options.enableVignette && vignetteGradient) {
+                          ctx.fillStyle = vignetteGradient; ctx.fillRect(0, 0, width, height);
+                      }
+
+                      // Draw Thumbnail Image (COVER/FRAME)
+                      if (imageElement) {
+                          ctx.filter = 'none';
+                          ctx.drawImage(imageElement, 0, 0, width, height);
+                      }
+
+                      // Draw Text Overlay
+                      if (options.textOverlay.enabled && options.textOverlay.text) {
+                          const { text, position, backgroundColor, textColor, fontSize: customFontSize } = options.textOverlay;
+                          
+                          // Use custom font size if available, otherwise default to 48 (or calculated)
+                          const fontSize = customFontSize || 48;
+                          
+                          ctx.font = `bold ${fontSize}px "Lora", serif`;
+                          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                          
+                          let tx = width/2, ty = height/2;
+                          
+                          // Adjust positions based on percentage (0-100)
+                          // position is now a number
+                          const pct = position as unknown as number;
+                          ty = height * (pct / 100);
+                          
+                          // Draw Background Pill/Rect - "bỏ màu nền"
+                          if (backgroundColor && backgroundColor !== 'transparent') {
+                             const tm = ctx.measureText(text);
+                             const paddingX = fontSize * 1.5;
+                             const paddingY = fontSize * 1.0;
+                             const bw = tm.width + paddingX; 
+                             const bh = fontSize + paddingY;
+                             
+                             ctx.fillStyle = backgroundColor; 
+                             ctx.beginPath();
+                             ctx.roundRect(tx - bw/2, ty - bh/2, bw, bh, bh/2);
+                             ctx.fill();
+                          }
+                          
+                          // Draw Text
+                          ctx.fillStyle = textColor; 
+                          // Add stroke for visibility without background
+                          ctx.lineWidth = fontSize * 0.1;
+                          ctx.strokeStyle = 'black';
+                          ctx.strokeText(text, tx, ty);
+                          ctx.fillText(text, tx, ty);
+                      }
+
+                      // Encode Frame
+                      // Calculate timestamp relative to output
+                      const relativeTime = currentTime - segment.start;
+                      const timestamp = outputTimestamp + (relativeTime * 1_000_000);
+                      
+                      const frame = new VideoFrame(canvas, { timestamp });
+                      
+                      const needsKeyFrame = (timestamp % 2000000) < 100000; // Keyframe every ~2s
+                      videoEncoder!.encode(frame, { keyFrame: needsKeyFrame });
+                      frame.close();
+
+                      // Update Progress
+                      // Approximate progress based on segment index
+                      const progressPerSegment = 100 / segments.length;
+                      const currentSegmentProgress = (relativeTime / (segment.end - segment.start)) * progressPerSegment;
+                      const totalProgress = (segmentIndex * progressPerSegment) + currentSegmentProgress;
+                      onProgress(Math.min(totalProgress, 99));
+
+                      if (!cancelled && !segmentFinished) {
+                         if ('requestVideoFrameCallback' in videoElement!) {
+                             videoElement!.requestVideoFrameCallback(drawFrame);
+                         } else {
+                             requestAnimationFrame(drawFrame);
+                         }
+                      }
+                  };
+                  
+                  if ('requestVideoFrameCallback' in videoElement!) {
+                      videoElement!.requestVideoFrameCallback(drawFrame);
+                  } else {
+                      requestAnimationFrame(drawFrame);
+                  }
+              });
+              
+              videoElement!.pause();
+              segmentIndex++;
+          }
+          
+          finishProcessing();
       };
-      
-      processAudio().catch(e => console.error("Audio processing error", e));
 
-      // Video Loop
-      const processVideo = async () => {
-         const drawFrame = async () => {
-             if (cancelled) return;
-
-             const currentTime = videoElement!.currentTime;
-             if (currentTime >= endTimeLimit || videoElement!.ended) {
-                 finishProcessing();
-                 return;
-             }
-
-             // Background (Black bars)
-             ctx.fillStyle = '#000000';
-             ctx.fillRect(0, 0, width, height);
-
-             // Apply Filter to Context
-             let filterString = '';
-             switch (options.colorFilter) {
-                 case 'bright': filterString += 'brightness(1.1) saturate(1.15) '; break;
-                 case 'warm':   filterString += 'sepia(0.15) contrast(1.05) saturate(1.1) '; break;
-                 case 'cool':   filterString += 'hue-rotate(10deg) contrast(0.95) saturate(0.9) '; break;
-                 case 'contrast': filterString += 'contrast(1.3) saturate(1.2) '; break;
-                 case 'vintage': filterString += 'sepia(0.4) contrast(1.1) brightness(0.9) '; break;
-             }
-             ctx.filter = filterString || 'none';
-
-             // Draw Video Frame (CENTERED & SCALED)
-             ctx.save();
-             if (options.flipHorizontal) {
-                 ctx.translate(width, 0); ctx.scale(-1, 1);
-             }
-             
-             // Calculate scale to fit video into 1080 width
-             const videoAspect = videoElement!.videoWidth / videoElement!.videoHeight;
-             // Default strategy: Fit Width (1080)
-             let drawWidth = width;
-             let drawHeight = width / videoAspect;
-             
-             // Apply Zoom (Scale from center)
-             // zoomLevel 0 means fit width. Positive zooms in, negative zooms out.
-             const scaleMultiplier = 1 + options.zoomLevel;
-             drawWidth *= scaleMultiplier;
-             drawHeight *= scaleMultiplier;
-
-             // Center the video
-             const dx = (width - drawWidth) / 2;
-             const dy = (height - drawHeight) / 2;
-
-             ctx.drawImage(videoElement!, dx, dy, drawWidth, drawHeight);
-             ctx.restore();
-
-             // Draw Effects
-             if (options.enableMotionBlur) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, 0, width, height); }
-             if (options.filmGrainScore > 0 && noisePattern) {
-                 ctx.save(); ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = noisePattern;
-                 ctx.translate(Math.random()*100, Math.random()*100); 
-                 ctx.fillRect(-100, -100, width+100, height+100); ctx.restore();
-             }
-             if (options.enableVignette && vignetteGradient) {
-                 ctx.fillStyle = vignetteGradient; ctx.fillRect(0, 0, width, height);
-             }
-
-             // Draw Thumbnail Image (COVER/FRAME)
-             // Force Stretch to fill 1080x1920 (Fixed Frame)
-             ctx.filter = 'none';
-             ctx.drawImage(imageElement, 0, 0, width, height);
-
-             // Draw Text Overlay
-             if (options.textOverlay.enabled && options.textOverlay.text) {
-                 const { text, position, backgroundColor, textColor } = options.textOverlay;
-                 const fontSize = height * 0.04; // 4% of height
-                 ctx.font = `bold ${fontSize}px "Inter", sans-serif`;
-                 ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                 const tm = ctx.measureText(text);
-                 const bw = tm.width + fontSize; const bh = fontSize * 1.8;
-                 let tx = width/2, ty = height/2;
-                 if (position === 'top') ty = height*0.15; if (position === 'bottom') ty = height*0.85;
-                 ctx.fillStyle = backgroundColor; ctx.fillRect(tx-bw/2, ty-bh/2, bw, bh);
-                 ctx.fillStyle = textColor; ctx.fillText(text, tx, ty);
-             }
-
-             // Encode Frame
-             const timestamp = currentTime * 1_000_000;
-             const frame = new VideoFrame(canvas, { timestamp });
-             
-             const needsKeyFrame = (currentTime - lastKeyFrame) >= 2;
-             if (needsKeyFrame) lastKeyFrame = currentTime;
-
-             videoEncoder!.encode(frame, { keyFrame: needsKeyFrame });
-             frame.close();
-
-             // Update Progress
-             const progress = ((currentTime - startTimeOffset) / duration) * 100;
-             onProgress(Math.min(progress, 99));
-
-             if (!cancelled) {
-                if ('requestVideoFrameCallback' in videoElement!) {
-                    videoElement!.requestVideoFrameCallback(drawFrame);
-                } else {
-                    requestAnimationFrame(drawFrame);
-                }
-             }
-         };
-
-         if ('requestVideoFrameCallback' in videoElement!) {
-             videoElement!.requestVideoFrameCallback(drawFrame);
-         } else {
-             requestAnimationFrame(drawFrame);
-         }
-      };
-
-      processVideo();
+      processSegments();
 
       const finishProcessing = async () => {
           if (cancelled) return;
