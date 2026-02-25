@@ -46,7 +46,7 @@ export const generateTikTokContent = async (videoFile: File, productName?: strin
 
     YÊU CẦU ĐẦU RA (JSON FORMAT):
     {
-      "caption": "Viết 1 caption viral, ngắn gọn, hấp dẫn, kèm 5 hashtag phù hợp (Lưu ý yêu cầu hashtag của từng nền tảng).",
+      "caption": "Viết 1 caption viral, ngắn gọn, hấp dẫn, kèm 5 hashtag phù hợp (Lưu ý yêu cầu hashtag của từng nền tảng). TỔNG ĐỘ DÀI (bao gồm cả hashtag) PHẢI NHỎ HƠN 140 KÝ TỰ.",
       "hook": "Viết 1 câu Hook cực ngắn (dưới 6 từ) để chèn lên video, gây tò mò hoặc kích thích người xem dừng lại. Ví dụ: 'Sự thật về...', 'Đừng bỏ lỡ...', 'Cảnh báo...'",
       ${includeSubtitles ? `"subtitles": [
         "Viết 3 đến 5 dòng subtitle ngắn gọn tóm tắt nội dung chính hoặc lời thoại quan trọng trong video.",
@@ -59,6 +59,7 @@ export const generateTikTokContent = async (videoFile: File, productName?: strin
 
     LƯU Ý QUAN TRỌNG:
     - Caption phải tự nhiên, bắt trend, không quá quảng cáo.
+    - TỔNG ĐỘ DÀI CAPTION + HASHTAG < 140 KÝ TỰ.
     - Hook phải cực kỳ ngắn gọn, in đậm, gây sốc hoặc tò mò.
     ${includeSubtitles ? '- Subtitle phải khớp với nội dung video, mỗi dòng ngắn gọn dễ đọc.' : ''}
     - Trả về CHỈ LÀ JSON thuần túy, không có markdown formatting (như \`\`\`json).

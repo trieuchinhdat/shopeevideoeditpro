@@ -44,7 +44,8 @@ const App: React.FC = () => {
       fontSize: 52, // Default 52 as requested
       backgroundColor: 'transparent',
       textColor: '#FFFF00'
-    }
+    },
+    resolution: '1080p' // Default High Quality
   });
 
   // Helper to update text overlay config specifically
@@ -151,23 +152,15 @@ const App: React.FC = () => {
     });
   };
 
-  const processAllVideos = async () => {
-    // Removed check for image.file to allow processing without cover
-    // if (!image.file) return; 
-    setIsProcessingBatch(true);
-
-    // Process ALL videos, resetting status if needed
-    // User requested: "mỗi lần bấm xuất video thì chạy lại các cấu hình"
-    const itemsToProcess = videos.filter(v => v.file);
-
-    for (const item of itemsToProcess) {
+  const processSingleVideo = async (item: VideoItem) => {
+      if (!item.file) return;
+      
       setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'processing', progress: 0 } : v));
-      setSelectedVideoId(item.id);
-
+      
       try {
         const { blob, extension } = await processVideoWithThumbnail(
-          item.file!,
-          image.file, // Can be null now
+          item.file,
+          image.file, 
           config, 
           (p) => {
              setVideos(prev => prev.map(v => v.id === item.id ? { ...v, progress: p } : v));
@@ -181,18 +174,62 @@ const App: React.FC = () => {
             extension, 
             progress: 100 
         } : v));
-
-        // SHOW NOTIFICATION (Sonner)
-        toast.success(`Đã xong: ${item.name}`, {
-           description: 'Video đã được xử lý và sẵn sàng tải xuống.',
-           duration: 3000
-        });
-
       } catch (e) {
         console.error(e);
-        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi: Hãy dùng Chrome/Edge bản mới' } : v));
-        toast.error('Lỗi xử lý video', { description: 'Vui lòng kiểm tra lại file hoặc thử trình duyệt Chrome mới nhất.' });
+        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error' } : v));
       }
+  };
+
+  const processAllVideos = async () => {
+    // Removed check for image.file to allow processing without cover
+    // if (!image.file) return; 
+    setIsProcessingBatch(true);
+
+    // Process ALL videos, resetting status if needed
+    // User requested: "mỗi lần bấm xuất video thì chạy lại các cấu hình"
+    const itemsToProcess = videos.filter(v => v.file);
+
+    // Helper function to process a single item
+    const processItem = async (item: VideoItem) => {
+        setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'processing', progress: 0 } : v));
+        setSelectedVideoId(item.id);
+
+        try {
+            const { blob, extension } = await processVideoWithThumbnail(
+            item.file!,
+            image.file, // Can be null now
+            config, 
+            (p) => {
+                setVideos(prev => prev.map(v => v.id === item.id ? { ...v, progress: p } : v));
+            }
+            );
+            const url = URL.createObjectURL(blob);
+            setVideos(prev => prev.map(v => v.id === item.id ? { 
+                ...v, 
+                status: 'completed', 
+                resultUrl: url, 
+                extension, 
+                progress: 100 
+            } : v));
+
+            // SHOW NOTIFICATION (Sonner)
+            toast.success(`Đã xong: ${item.name}`, {
+                description: 'Video đã được xử lý và sẵn sàng tải xuống.',
+                duration: 3000
+            });
+
+        } catch (e: any) {
+            console.error(e);
+            setVideos(prev => prev.map(v => v.id === item.id ? { ...v, status: 'error', errorMsg: 'Lỗi: Hãy dùng Chrome/Edge bản mới' } : v));
+            toast.error(`Lỗi xử lý video ${item.name}`, { description: 'Vui lòng kiểm tra lại file hoặc thử trình duyệt Chrome mới nhất.' });
+        }
+    };
+
+    // Process in chunks of 2 to avoid browser crash but speed up batch
+    const CONCURRENCY_LIMIT = 2;
+    for (let i = 0; i < itemsToProcess.length; i += CONCURRENCY_LIMIT) {
+        const chunk = itemsToProcess.slice(i, i + CONCURRENCY_LIMIT);
+        await Promise.all(chunk.map(item => processItem(item)));
     }
 
     setIsProcessingBatch(false);
@@ -592,26 +629,88 @@ const App: React.FC = () => {
             {/* Player */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col">
               <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                 <Play size={20} className="text-[#ee4d2d]" /> Xem trước
+                 <Play size={20} className="text-[#ee4d2d]" /> Xem trước (Live Preview)
               </h2>
 
-              <div className="flex-1 bg-black/5 rounded-2xl border-2 border-dashed border-gray-200 overflow-hidden relative flex items-center justify-center min-h-[300px]">
+              <div className="flex-1 bg-black/5 rounded-2xl border-2 border-dashed border-gray-200 overflow-hidden relative flex items-center justify-center min-h-[500px]">
                 {selectedVideo ? (
-                   selectedVideo.resultUrl ? (
-                      <video src={selectedVideo.resultUrl} controls className="h-full w-full object-contain bg-black" />
-                   ) : selectedVideo.file ? (
-                      <div className="relative w-full h-full flex flex-col">
-                         <div className="flex-1 flex items-center justify-center bg-black">
-                            <video src={selectedVideo.originalUrl!} controls className="max-h-full max-w-full" />
-                         </div>
-                         <div className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded">Video gốc</div>
+                   <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden group">
+                      {/* Container forcing 9:16 aspect ratio for preview accuracy */}
+                      <div 
+                        className="relative overflow-hidden shadow-2xl"
+                        style={{
+                            width: '100%',
+                            height: '100%',
+                            maxWidth: '360px', // Approx 9:16 ratio width for typical height
+                            aspectRatio: '9/16',
+                            backgroundColor: 'black'
+                        }}
+                      >
+                          {/* Video Layer */}
+                          <video 
+                            src={selectedVideo.originalUrl!} 
+                            controls 
+                            className="w-full h-full object-cover"
+                            style={{
+                                transform: `${config.flipHorizontal ? 'scaleX(-1)' : 'scaleX(1)'} scale(${1 + config.zoomLevel})`,
+                                filter: `
+                                    ${config.colorFilter === 'bright' ? 'brightness(1.1) saturate(1.15)' : ''}
+                                    ${config.colorFilter === 'warm' ? 'sepia(0.15) contrast(1.05) saturate(1.1)' : ''}
+                                    ${config.colorFilter === 'cool' ? 'hue-rotate(10deg) contrast(0.95) saturate(0.9)' : ''}
+                                    ${config.colorFilter === 'contrast' ? 'contrast(1.3) saturate(1.2)' : ''}
+                                    ${config.colorFilter === 'vintage' ? 'sepia(0.4) contrast(1.1) brightness(0.9)' : ''}
+                                `
+                            }}
+                            ref={(el) => {
+                                if (el) el.playbackRate = config.speed;
+                            }}
+                          />
+
+                          {/* Vignette Overlay */}
+                          {config.enableVignette && (
+                              <div className="absolute inset-0 pointer-events-none" style={{
+                                  background: 'radial-gradient(circle, transparent 40%, rgba(0,0,0,0.6) 100%)'
+                              }} />
+                          )}
+
+                          {/* Cover Image Overlay */}
+                          {image.url && (
+                              <img 
+                                src={image.url} 
+                                className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
+                                alt="Cover"
+                              />
+                          )}
+
+                          {/* Text Hook Overlay */}
+                          {config.textOverlay.enabled && config.textOverlay.text && (
+                              <div 
+                                className="absolute left-0 right-0 z-20 pointer-events-none flex justify-center"
+                                style={{
+                                    top: `${config.textOverlay.position}%`,
+                                    transform: 'translateY(-50%)'
+                                }}
+                              >
+                                  <div 
+                                    style={{
+                                        fontFamily: '"Lora", serif',
+                                        fontWeight: 'bold',
+                                        fontSize: `${(config.textOverlay.fontSize / 1080) * 360}px`, // Scale font relative to preview width (approx 360px)
+                                        color: config.textOverlay.textColor,
+                                        backgroundColor: config.textOverlay.backgroundColor,
+                                        padding: '4px 12px',
+                                        borderRadius: '8px',
+                                        textTransform: 'uppercase',
+                                        textAlign: 'center',
+                                        textShadow: '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' // Stroke simulation
+                                    }}
+                                  >
+                                      {config.textOverlay.text}
+                                  </div>
+                              </div>
+                          )}
                       </div>
-                   ) : (
-                      <div className="text-center p-4">
-                        <Loader2 className="animate-spin text-orange-500 mx-auto" size={32}/>
-                        <p className="text-sm text-gray-500 mt-2">Đang tải...</p>
-                      </div>
-                   )
+                   </div>
                 ) : (
                   <div className="text-center p-8 opacity-40">
                      <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mb-4 mx-auto">
