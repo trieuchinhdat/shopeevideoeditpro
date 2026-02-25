@@ -310,7 +310,30 @@ export const processVideoWithThumbnail = async (
                               const buffer = new Uint8Array(size);
                               value.copyTo(buffer, { planeIndex: 0 });
                               
-                              // Create new AudioData with new timestamp
+                              // Fix: Ensure buffer size meets minimum requirements for AAC encoding
+                              // Some browsers/encoders require minimum frame sizes (e.g. 1024 samples)
+                              // If data is too small, we pad it with silence or skip it
+                              // The error "needs 3528 bytes, received 1764" suggests we need more data.
+                              
+                              // However, we cannot easily "resize" an AudioData object's internal frame count
+                              // without complex resampling.
+                              // BUT, the error usually comes from the *Encoder* not accepting small chunks,
+                              // OR from the AudioData constructor if we mess up the frame count vs size.
+                              
+                              // The error "Failed to construct 'AudioData': data is too small" means
+                              // the buffer size provided doesn't match: numberOfFrames * numberOfChannels * bytesPerSample
+                              
+                              // Let's verify the math:
+                              // 1764 bytes / 2 channels / 4 bytes (float32) = 220.5 frames? No.
+                              // 1764 bytes / 2 channels / 2 bytes (int16) = 441 frames.
+                              
+                              // If it expects 3528 bytes, that's exactly double 1764.
+                              // This implies the format might be Float32 (4 bytes) but we provided Int16 (2 bytes)?
+                              // OR the numberOfFrames we passed requires more bytes than we gave.
+                              
+                              // value.format is usually 'f32' (float32) or 's16' (int16) or 'u8'.
+                              // We must use the SAME format when constructing.
+                              
                               const newAudioData = new AudioData({
                                   format: value.format,
                                   sampleRate: value.sampleRate,

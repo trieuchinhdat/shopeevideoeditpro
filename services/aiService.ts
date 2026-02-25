@@ -19,7 +19,7 @@ const fileToGenerativePart = async (file: File): Promise<string> => {
   });
 };
 
-export const generateTikTokContent = async (videoFile: File, productName?: string): Promise<{ caption: string, hook: string, subtitles: string[] }> => {
+export const generateTikTokContent = async (videoFile: File, productName?: string, platform: 'tiktok' | 'shopee' | 'reels' = 'tiktok'): Promise<{ caption: string, hook: string, subtitles: string[] }> => {
   try {
     if (!videoFile) throw new Error("Không tìm thấy file video.");
 
@@ -30,13 +30,23 @@ export const generateTikTokContent = async (videoFile: File, productName?: strin
     const videoBase64 = await fileToGenerativePart(videoFile);
     const mimeType = videoFile.type || 'video/mp4';
 
-    const promptText = `Bạn là chuyên gia sáng tạo nội dung trên TikTok. Hãy phân tích video này và trả về kết quả dưới dạng JSON.
+    let platformInstruction = "";
+    if (platform === 'shopee') {
+        platformInstruction = "Đặc biệt cho Shopee Video: BẮT BUỘC phải có 3 hashtag này ở cuối caption: #LuotVuiMuaLien #ShopeeCreator #ShopeeVideo. Thêm 2 hashtag khác phù hợp với sản phẩm.";
+    } else if (platform === 'reels') {
+        platformInstruction = "Tối ưu cho Facebook/Instagram Reels.";
+    } else {
+        platformInstruction = "Tối ưu cho TikTok.";
+    }
+
+    const promptText = `Bạn là chuyên gia sáng tạo nội dung trên mạng xã hội (${platform}). Hãy phân tích video này và trả về kết quả dưới dạng JSON.
 
     ${productName ? `Sản phẩm/Chủ đề: "${productName}"` : ""}
+    ${platformInstruction}
 
     YÊU CẦU ĐẦU RA (JSON FORMAT):
     {
-      "caption": "Viết 1 caption viral cho TikTok, ngắn gọn, hấp dẫn, kèm 3-5 hashtag phù hợp.",
+      "caption": "Viết 1 caption viral, ngắn gọn, hấp dẫn, kèm 5 hashtag phù hợp (Lưu ý yêu cầu hashtag của từng nền tảng).",
       "hook": "Viết 1 câu Hook cực ngắn (dưới 6 từ) để chèn lên video, gây tò mò hoặc kích thích người xem dừng lại. Ví dụ: 'Sự thật về...', 'Đừng bỏ lỡ...', 'Cảnh báo...'",
       "subtitles": [
         "Viết 3 đến 5 dòng subtitle ngắn gọn tóm tắt nội dung chính hoặc lời thoại quan trọng trong video.",

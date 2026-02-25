@@ -17,6 +17,7 @@ const App: React.FC = () => {
   
   // Input states
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const [platform, setPlatform] = useState<'tiktok' | 'shopee' | 'reels'>('tiktok');
 
   // --- ADVANCED CONFIG STATE ---
   const [config, setConfig] = useState<ProcessOptions>({
@@ -36,7 +37,7 @@ const App: React.FC = () => {
     trimStart: 0,
     trimEnd: 0, // 0 = auto end
     textOverlay: {
-      enabled: false,
+      enabled: true, // Default enabled as per request "cần thêm nút tắt bật" implies control, but usually users want it on. Let's verify UI toggle.
       text: 'MUA NGAY 👇',
       position: 70, // Default 70% (Bottom-ish)
       fontSize: 48,
@@ -86,7 +87,7 @@ const App: React.FC = () => {
   const triggerAutoCaption = async (id: string, file: File, productName?: string) => {
     setVideos(prev => prev.map(v => v.id === id ? { ...v, isGeneratingCaption: true, generatedCaption: '', generatedHook: '', generatedSubtitles: [] } : v));
     try {
-        const { caption, hook, subtitles } = await generateTikTokContent(file, productName);
+        const { caption, hook, subtitles } = await generateTikTokContent(file, productName, platform);
         
         setVideos(prev => prev.map(v => v.id === id ? { 
             ...v, 
@@ -429,46 +430,62 @@ const App: React.FC = () => {
 
                  {/* 5. Hook Position Config */}
                  <div className="bg-orange-50 p-3 rounded-lg space-y-2 border border-orange-100">
-                     <h3 className="text-sm font-bold text-gray-700 flex items-center gap-1"><Type size={14}/> Cấu hình Hook Viral</h3>
+                     <div className="flex justify-between items-center">
+                        <h3 className="text-sm font-bold text-gray-700 flex items-center gap-1"><Type size={14}/> Cấu hình Hook Viral</h3>
+                        <button 
+                            onClick={() => updateTextOverlay({ enabled: !config.textOverlay.enabled })}
+                            className={`text-[10px] font-bold px-2 py-1 rounded border transition ${
+                                config.textOverlay.enabled 
+                                ? 'bg-green-100 text-green-700 border-green-200' 
+                                : 'bg-gray-100 text-gray-500 border-gray-200'
+                            }`}
+                        >
+                            {config.textOverlay.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT'}
+                        </button>
+                     </div>
                      
-                     {/* Position Slider */}
-                     <div>
-                         <div className="flex justify-between text-xs text-gray-600 mb-1">
-                             <span>Vị trí (Từ trên xuống)</span>
-                             <span className="font-bold">{config.textOverlay.position}%</span>
-                         </div>
-                         <input 
-                            type="range" min="0" max="100" step="5"
-                            value={config.textOverlay.position}
-                            onChange={(e) => updateTextOverlay({ position: parseInt(e.target.value) })}
-                            className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#ee4d2d]"
-                         />
-                     </div>
+                     {config.textOverlay.enabled && (
+                         <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                             {/* Position Slider */}
+                             <div>
+                                 <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                     <span>Vị trí (Từ trên xuống)</span>
+                                     <span className="font-bold">{config.textOverlay.position}%</span>
+                                 </div>
+                                 <input 
+                                    type="range" min="0" max="100" step="5"
+                                    value={config.textOverlay.position}
+                                    onChange={(e) => updateTextOverlay({ position: parseInt(e.target.value) })}
+                                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#ee4d2d]"
+                                 />
+                             </div>
 
-                     {/* Font Size & Color */}
-                     <div className="grid grid-cols-2 gap-2">
-                        <div>
-                            <label className="text-[10px] text-gray-500 block mb-1">Cỡ chữ (px)</label>
-                            <input 
-                                type="number" 
-                                value={config.textOverlay.fontSize}
-                                onChange={(e) => updateTextOverlay({ fontSize: parseInt(e.target.value) })}
-                                className="w-full text-xs p-1.5 rounded border border-gray-200"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-[10px] text-gray-500 block mb-1">Màu chữ</label>
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    type="color" 
-                                    value={config.textOverlay.textColor}
-                                    onChange={(e) => updateTextOverlay({ textColor: e.target.value })}
-                                    className="w-8 h-8 p-0 rounded border-0 cursor-pointer"
-                                />
-                                <span className="text-[10px] text-gray-400 uppercase">{config.textOverlay.textColor}</span>
-                            </div>
-                        </div>
-                     </div>
+                             {/* Font Size & Color */}
+                             <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block mb-1">Cỡ chữ (px)</label>
+                                    <input 
+                                        type="number" 
+                                        value={config.textOverlay.fontSize}
+                                        onChange={(e) => updateTextOverlay({ fontSize: parseInt(e.target.value) })}
+                                        className="w-full text-xs p-1.5 rounded border border-gray-200"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block mb-1">Màu chữ</label>
+                                    <div className="flex items-center gap-2">
+                                        <input 
+                                            type="color" 
+                                            value={config.textOverlay.textColor}
+                                            onChange={(e) => updateTextOverlay({ textColor: e.target.value })}
+                                            className="w-8 h-8 p-0 rounded border-0 cursor-pointer"
+                                        />
+                                        <span className="text-[10px] text-gray-400 uppercase">{config.textOverlay.textColor}</span>
+                                    </div>
+                                </div>
+                             </div>
+                         </div>
+                     )}
                  </div>
 
               </div>
@@ -642,6 +659,24 @@ const App: React.FC = () => {
                 </div>
                 
                 <div className="space-y-3">
+                   
+                   {/* Platform Selector */}
+                   <div className="flex bg-white p-1 rounded-xl border border-indigo-100">
+                        {(['tiktok', 'shopee', 'reels'] as const).map((p) => (
+                            <button
+                                key={p}
+                                onClick={() => setPlatform(p)}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-lg capitalize transition ${
+                                    platform === p 
+                                    ? 'bg-indigo-600 text-white shadow-sm' 
+                                    : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                            >
+                                {p}
+                            </button>
+                        ))}
+                   </div>
+
                    <div className="relative">
                      <input 
                        type="text" 

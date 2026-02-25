@@ -10,7 +10,7 @@ export const Header: React.FC = () => {
             <Music2 size={24} className="text-[#00f2ea] drop-shadow-[2px_2px_0_#ff0050]" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Tiktok Video Editor Pro</h1>
+            <h1 className="text-xl font-bold text-gray-900">Video Short Editor Pro</h1>
             <p className="text-xs text-gray-500 font-medium">Tối ưu video & Gắn bìa tự động</p>
           </div>
         </div>
