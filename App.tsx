@@ -17,7 +17,8 @@ const App: React.FC = () => {
   
   // Input states
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
-  const [platform, setPlatform] = useState<'tiktok' | 'shopee' | 'reels'>('tiktok');
+  const [platform, setPlatform] = useState<'tiktok' | 'shopee' | 'reels'>('shopee'); // Default Shopee as requested
+  const [includeSubtitles, setIncludeSubtitles] = useState(false); // Default false as requested
 
   // --- ADVANCED CONFIG STATE ---
   const [config, setConfig] = useState<ProcessOptions>({
@@ -26,21 +27,21 @@ const App: React.FC = () => {
     zoomLevel: 0.12, 
     flipHorizontal: false,
     speed: 1.05, 
-    volume: 1.0, 
+    volume: 0, // Default 0 (Muted) as requested
     colorFilter: 'bright',
     enableMotionBlur: false,
     // Visual Effects
     filmGrainScore: 0.15, // Default subtle noise
     enableVignette: false,
-    enableAutoReorder: false,
+    enableAutoReorder: true, // Default true as requested
     // Pro Features
     trimStart: 0,
     trimEnd: 0, // 0 = auto end
     textOverlay: {
-      enabled: true, // Default enabled as per request "cần thêm nút tắt bật" implies control, but usually users want it on. Let's verify UI toggle.
+      enabled: true, 
       text: 'MUA NGAY 👇',
       position: 70, // Default 70% (Bottom-ish)
-      fontSize: 48,
+      fontSize: 52, // Default 52 as requested
       backgroundColor: 'transparent',
       textColor: '#FFFF00'
     }
@@ -87,7 +88,7 @@ const App: React.FC = () => {
   const triggerAutoCaption = async (id: string, file: File, productName?: string) => {
     setVideos(prev => prev.map(v => v.id === id ? { ...v, isGeneratingCaption: true, generatedCaption: '', generatedHook: '', generatedSubtitles: [] } : v));
     try {
-        const { caption, hook, subtitles } = await generateTikTokContent(file, productName, platform);
+        const { caption, hook, subtitles } = await generateTikTokContent(file, productName, platform, includeSubtitles);
         
         setVideos(prev => prev.map(v => v.id === id ? { 
             ...v, 
@@ -662,7 +663,7 @@ const App: React.FC = () => {
                    
                    {/* Platform Selector */}
                    <div className="flex bg-white p-1 rounded-xl border border-indigo-100">
-                        {(['tiktok', 'shopee', 'reels'] as const).map((p) => (
+                        {(['shopee', 'tiktok', 'reels'] as const).map((p) => (
                             <button
                                 key={p}
                                 onClick={() => setPlatform(p)}
@@ -676,6 +677,19 @@ const App: React.FC = () => {
                             </button>
                         ))}
                    </div>
+
+                   {/* Subtitle Toggle */}
+                   <button
+                        onClick={() => setIncludeSubtitles(!includeSubtitles)}
+                        className={`w-full py-2 rounded-xl border flex items-center justify-center gap-2 transition text-xs font-medium ${
+                            includeSubtitles
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
+                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                        }`}
+                   >
+                        <Type size={14} />
+                        {includeSubtitles ? 'Đang bật: Tạo Subtitle Gợi Ý' : 'Bật tạo Subtitle Gợi Ý (Tốn thời gian hơn)'}
+                   </button>
 
                    <div className="relative">
                      <input 
@@ -738,7 +752,7 @@ const App: React.FC = () => {
                              </div>
                          </div>
 
-                         {selectedVideo.generatedSubtitles && selectedVideo.generatedSubtitles.length > 0 && (
+                         {selectedVideo.generatedSubtitles && selectedVideo.generatedSubtitles.length > 0 && includeSubtitles && (
                              <div>
                                  <label className="text-xs font-bold text-indigo-800 mb-1 block">Subtitles Gợi Ý:</label>
                                  <div className="space-y-2">

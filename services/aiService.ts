@@ -19,7 +19,7 @@ const fileToGenerativePart = async (file: File): Promise<string> => {
   });
 };
 
-export const generateTikTokContent = async (videoFile: File, productName?: string, platform: 'tiktok' | 'shopee' | 'reels' = 'tiktok'): Promise<{ caption: string, hook: string, subtitles: string[] }> => {
+export const generateTikTokContent = async (videoFile: File, productName?: string, platform: 'tiktok' | 'shopee' | 'reels' = 'tiktok', includeSubtitles: boolean = false): Promise<{ caption: string, hook: string, subtitles: string[] }> => {
   try {
     if (!videoFile) throw new Error("Không tìm thấy file video.");
 
@@ -48,19 +48,19 @@ export const generateTikTokContent = async (videoFile: File, productName?: strin
     {
       "caption": "Viết 1 caption viral, ngắn gọn, hấp dẫn, kèm 5 hashtag phù hợp (Lưu ý yêu cầu hashtag của từng nền tảng).",
       "hook": "Viết 1 câu Hook cực ngắn (dưới 6 từ) để chèn lên video, gây tò mò hoặc kích thích người xem dừng lại. Ví dụ: 'Sự thật về...', 'Đừng bỏ lỡ...', 'Cảnh báo...'",
-      "subtitles": [
+      ${includeSubtitles ? `"subtitles": [
         "Viết 3 đến 5 dòng subtitle ngắn gọn tóm tắt nội dung chính hoặc lời thoại quan trọng trong video.",
         "Dòng 2...",
         "Dòng 3...",
         "Dòng 4 (nếu có)...",
         "Dòng 5 (nếu có)..."
-      ]
+      ]` : `"subtitles": []`}
     }
 
     LƯU Ý QUAN TRỌNG:
     - Caption phải tự nhiên, bắt trend, không quá quảng cáo.
     - Hook phải cực kỳ ngắn gọn, in đậm, gây sốc hoặc tò mò.
-    - Subtitle phải khớp với nội dung video, mỗi dòng ngắn gọn dễ đọc.
+    ${includeSubtitles ? '- Subtitle phải khớp với nội dung video, mỗi dòng ngắn gọn dễ đọc.' : ''}
     - Trả về CHỈ LÀ JSON thuần túy, không có markdown formatting (như \`\`\`json).
     `;
 
