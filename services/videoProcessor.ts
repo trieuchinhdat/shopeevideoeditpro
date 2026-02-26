@@ -144,10 +144,10 @@ export const processVideoWithThumbnail = async (
           segments = [{ start: startTimeOffset, end: endTimeLimit }];
       }
 
-      // 4. Set Dimensions - FIXED 9:16 RESOLUTION
-      // 1080p (1080x1920) or 720p (720x1280) based on config
-      const width = options.resolution === '720p' ? 720 : 1080;
-      const height = options.resolution === '720p' ? 1280 : 1920;
+      // 4. Set Dimensions - FIXED 9:16 RESOLUTION (1080x1920)
+      // This is the standard for Shopee Video / TikTok
+      const width = 1080;
+      const height = 1920;
       
       const fps = 30; 
 
@@ -174,16 +174,12 @@ export const processVideoWithThumbnail = async (
         error: (e) => console.error("VideoEncoder Error", e)
       });
 
-      // Calculate bitrate based on resolution
-      // 1080p -> 5Mbps (optimized)
-      // 720p -> 2.5Mbps
-      const targetBitrate = options.resolution === '720p' ? 2_500_000 : 5_000_000;
-
       videoEncoder.configure({
         codec: 'avc1.4d002a', // H.264 Main Profile Level 4.2
         width: width,
         height: height,
-        bitrate: targetBitrate, 
+        // Reduced bitrate for faster encoding while maintaining decent quality for mobile
+        bitrate: 5_000_000, 
         framerate: fps,
         // Prefer hardware acceleration for speed
         hardwareAcceleration: 'prefer-hardware',

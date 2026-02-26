@@ -27,9 +27,6 @@ export interface ProcessOptions {
     backgroundColor: string; // Hex
     textColor: string; // Hex
   };
-  
-  // Export Settings
-  resolution: '720p' | '1080p';
 }
 
 export type ProcessingStatus = 'idle' | 'fetching' | 'queued' | 'processing' | 'completed' | 'error';
