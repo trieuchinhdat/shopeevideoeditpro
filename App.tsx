@@ -151,31 +151,7 @@ const App: React.FC = () => {
     });
   };
 
-  // Trigger processing when caption/hook is generated AND we have a selected video
-  // useEffect(() => {
-  //   if (!selectedVideoId) return;
-  //   const vid = videos.find(v => v.id === selectedVideoId);
-    
-  //   // Check if we have generated content and haven't processed yet (or want to update preview)
-  //   // We only auto-process if we have a hook (which implies caption is done) OR if image changed
-  //   if (vid && vid.generatedHook && vid.status !== 'processing' && !isProcessingBatch) {
-  //      // Debounce slightly to avoid rapid updates
-  //      const timer = setTimeout(() => {
-  //          processSingleVideo(vid);
-  //      }, 500);
-  //      return () => clearTimeout(timer);
-  //   }
-  // }, [videos.map(v => v.generatedHook).join(','), selectedVideoId]);
 
-  // Trigger processing when image changes
-  // useEffect(() => {
-  //     if (image.file && selectedVideoId && !isProcessingBatch) {
-  //         const vid = videos.find(v => v.id === selectedVideoId);
-  //         if (vid) {
-  //             processSingleVideo(vid);
-  //         }
-  //     }
-  // }, [image.file, selectedVideoId]);
 
   const processSingleVideo = async (item: VideoItem) => {
       if (!item.file) return;
