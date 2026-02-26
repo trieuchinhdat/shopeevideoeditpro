@@ -45,7 +45,7 @@ const App: React.FC = () => {
       backgroundColor: 'transparent',
       textColor: '#FFFF00'
     }
-  });
+  } as ProcessOptions);
 
   // Helper to update text overlay config specifically
   const updateTextOverlay = (updates: Partial<typeof config.textOverlay>) => {
