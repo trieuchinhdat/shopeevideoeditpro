@@ -24,23 +24,23 @@ const App: React.FC = () => {
   const [config, setConfig] = useState<ProcessOptions>({
     maintainAspectRatio: true,
     // Anti-detection Defaults
-    zoomLevel: 0.12, 
+    zoomLevel: 0.10, 
     flipHorizontal: false,
-    speed: 1.05, 
+    speed: 1.1, 
     volume: 0, // Default 0 (Muted) as requested
     colorFilter: 'bright',
     enableMotionBlur: false,
     // Visual Effects
-    filmGrainScore: 0.15, // Default subtle noise
+    filmGrainScore: 0.10, // Default subtle noise
     enableVignette: false,
     enableAutoReorder: true, // Default true as requested
     // Pro Features
     trimStart: 0,
     trimEnd: 0, // 0 = auto end
     textOverlay: {
-      enabled: true, 
-      text: 'MUA NGAY 👇',
-      position: 70, // Default 70% (Bottom-ish)
+      enabled: false, // Default DISABLED as requested
+      text: '',       // Default EMPTY as requested
+      position: 75, // Default 75% (Bottom-ish)
       fontSize: 52, // Default 52 as requested
       backgroundColor: 'transparent',
       textColor: '#FFFF00'
@@ -98,8 +98,8 @@ const App: React.FC = () => {
             generatedSubtitles: subtitles
         } : v));
 
-        // Auto-populate Text Overlay with Hook
-        if (hook) {
+        // Auto-populate Text Overlay with Hook ONLY if hook is valid
+        if (hook && hook.trim().length > 0) {
             const upperHook = hook.toUpperCase();
             setConfig(prev => ({
                 ...prev,
@@ -107,10 +107,13 @@ const App: React.FC = () => {
                     ...prev.textOverlay,
                     text: upperHook,
                     enabled: true,
-                    position: 70 // Default to 70% for auto hook
+                    position: 75 // Updated to 75% as per user preference
                 }
             }));
             toast.success("Đã tạo Caption & Hook viral!", { description: "Hook đã được điền vào phần Chèn Chữ." });
+        } else {
+             // If no hook generated, keep existing text (e.g. "MUA NGAY")
+             toast.success("Đã tạo Caption!", { description: "Không tìm thấy Hook phù hợp, giữ nguyên văn bản hiện tại." });
         }
 
     } catch (error: any) {
@@ -118,6 +121,25 @@ const App: React.FC = () => {
         setVideos(prev => prev.map(v => v.id === id ? { ...v, isGeneratingCaption: false } : v));
     }
   };
+
+  // Load saved cover image from LocalStorage on mount
+  useEffect(() => {
+    const savedImage = localStorage.getItem('savedCoverImage');
+    if (savedImage) {
+      // Convert Base64 to File
+      fetch(savedImage)
+        .then(res => res.blob())
+        .then(blob => {
+          const file = new File([blob], "saved-cover.png", { type: blob.type });
+          setImage({ file, url: savedImage });
+          toast.success("Đã khôi phục ảnh bìa đã lưu");
+        })
+        .catch(e => {
+            console.error("Failed to load saved image", e);
+            localStorage.removeItem('savedCoverImage');
+        });
+    }
+  }, []);
 
   const handleVideoFilesSelect = (files: File[]) => {
     const newItems: VideoItem[] = files.map(file => ({
@@ -131,13 +153,34 @@ const App: React.FC = () => {
       name: file.name,
       productTitle: file.name.split('.')[0]
     }));
-    setVideos(prev => [...prev, ...newItems]);
+    // Single video workflow: Replace existing list
+    setVideos(newItems);
+    if (newItems.length > 0) {
+      setSelectedVideoId(newItems[0].id);
+    }
   };
 
   const handleImageSelect = (files: File[]) => {
     if (files.length > 0) {
       const file = files[0];
-      setImage({ file, url: URL.createObjectURL(file) });
+      const url = URL.createObjectURL(file);
+      setImage({ file, url });
+
+      // Save to LocalStorage
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        try {
+          localStorage.setItem('savedCoverImage', base64String);
+          toast.success("Đã lưu ảnh bìa vào bộ nhớ trình duyệt");
+        } catch (e) {
+          console.error("Storage quota exceeded", e);
+          toast.warning("Ảnh quá lớn để lưu tự động", {
+            description: "Ảnh vẫn dùng được cho phiên này, nhưng sẽ mất khi tải lại trang."
+          });
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -248,7 +291,7 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
           
           {/* LEFT COLUMN: Controls & Input */}
-          <div className="lg:col-span-4 space-y-6 flex flex-col">
+          <div className="lg:col-span-5 space-y-6 flex flex-col">
             
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-5">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -261,7 +304,7 @@ const App: React.FC = () => {
                   accept="video/*"
                   label="Chọn Video"
                   sublabel="Tải lên video từ máy tính"
-                  multiple={true}
+                  multiple={false}
                   onFileSelect={handleVideoFilesSelect}
                   onClear={() => {}} 
                   iconType="video"
@@ -274,12 +317,162 @@ const App: React.FC = () => {
                       sublabel="Luôn hiển thị (Khung/Watermark)"
                       file={image.file}
                       onFileSelect={handleImageSelect}
-                      onClear={() => setImage({ file: null, url: null })}
+                      onClear={() => {
+                        setImage({ file: null, url: null });
+                        localStorage.removeItem('savedCoverImage');
+                      }}
                       iconType="image"
                     />
                 </div>
               </div>
             </div>
+
+            {/* AI Caption (Moved here) */}
+            {selectedVideo && (selectedVideo.status === 'idle' || selectedVideo.status === 'completed' || selectedVideo.status === 'processing') && (
+              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl shadow-sm border border-indigo-100 p-5">
+                <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+                       <Wand2 size={20} className="text-indigo-600" /> AI Caption
+                    </h2>
+                    {selectedVideo.generatedCaption && (
+                        <button 
+                            onClick={() => handleRegenerateCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
+                            className="p-1.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                            title="Tạo lại"
+                        >
+                            <RefreshCw size={16} />
+                        </button>
+                    )}
+                </div>
+                
+                <div className="space-y-3">
+                   
+                   {/* Platform Selector */}
+                   <div className="flex bg-white p-1 rounded-xl border border-indigo-100">
+                        {(['shopee', 'tiktok', 'reels'] as const).map((p) => (
+                            <button
+                                key={p}
+                                onClick={() => setPlatform(p)}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-lg capitalize transition ${
+                                    platform === p 
+                                    ? 'bg-indigo-600 text-white shadow-sm' 
+                                    : 'text-gray-500 hover:bg-gray-50'
+                                }`}
+                            >
+                                {p}
+                            </button>
+                        ))}
+                   </div>
+
+                   {/* Subtitle Toggle */}
+                   <button
+                        onClick={() => setIncludeSubtitles(!includeSubtitles)}
+                        className={`w-full py-2 rounded-xl border flex items-center justify-center gap-2 transition text-xs font-medium ${
+                            includeSubtitles
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
+                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                        }`}
+                   >
+                        <Type size={14} />
+                        {includeSubtitles ? 'Đang bật: Tạo Subtitle Gợi Ý' : 'Bật tạo Subtitle Gợi Ý (Tốn thời gian hơn)'}
+                   </button>
+
+                   <div className="relative">
+                     <input 
+                       type="text" 
+                       value={selectedVideo.productTitle || ''}
+                       onChange={(e) => {
+                          const val = e.target.value;
+                          setVideos(prev => prev.map(v => v.id === selectedVideo.id ? { ...v, productTitle: val } : v));
+                       }}
+                       placeholder="Nhập tên sản phẩm..."
+                       className="w-full text-sm p-3 rounded-xl border border-indigo-200 focus:ring-2 focus:ring-indigo-300 outline-none pr-10"
+                     />
+                   </div>
+
+                   {selectedVideo.isGeneratingCaption ? (
+                        <div className="w-full text-sm p-8 rounded-xl border border-dashed border-indigo-200 bg-white/50 flex flex-col items-center justify-center text-indigo-500 min-h-[120px]">
+                           <Loader2 className="animate-spin mb-2" size={24} />
+                           <span>AI đang viết...</span>
+                        </div>
+                     ) : selectedVideo.generatedCaption ? (
+                       <div className="relative mt-2 animate-in fade-in duration-500 space-y-4">
+                         
+                         {/* Hook Input */}
+                         <div>
+                             <label className="text-xs font-bold text-indigo-800 mb-1 block">Hook Viral (Lora Font):</label>
+                             <div className="relative">
+                                 <input 
+                                    type="text"
+                                    value={config.textOverlay.text}
+                                    onChange={(e) => updateTextOverlay({ text: e.target.value.toUpperCase() })}
+                                    className="w-full text-sm p-3 rounded-xl border border-indigo-200 bg-white font-lora font-bold uppercase pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                                    placeholder="HOOK VIRAL..."
+                                 />
+                                 <button 
+                                    onClick={() => navigator.clipboard.writeText(config.textOverlay.text || '')}
+                                    className="absolute top-2 right-2 p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
+                                    title="Sao chép Hook"
+                                 >
+                                    <Copy size={14} />
+                                 </button>
+                             </div>
+                             <p className="text-[10px] text-gray-400 italic mt-1">Tự động in hoa & chèn vào vị trí bottom.</p>
+                         </div>
+
+                         <div>
+                             <label className="text-xs font-bold text-indigo-800 mb-1 block">Caption Viral:</label>
+                             <div className="relative">
+                                <textarea 
+                                    readOnly
+                                    className="w-full text-sm p-3 rounded-xl border border-indigo-200 bg-white min-h-[120px] focus:outline-none"
+                                    value={selectedVideo.generatedCaption}
+                                />
+                                <button 
+                                    onClick={() => navigator.clipboard.writeText(selectedVideo.generatedCaption || '')}
+                                    className="absolute top-2 right-2 p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
+                                    title="Sao chép Caption"
+                                >
+                                    <Copy size={14} />
+                                </button>
+                             </div>
+                         </div>
+
+                         {selectedVideo.generatedSubtitles && selectedVideo.generatedSubtitles.length > 0 && includeSubtitles && (
+                             <div>
+                                 <label className="text-xs font-bold text-indigo-800 mb-1 block">Subtitles Gợi Ý:</label>
+                                 <div className="space-y-2">
+                                     {selectedVideo.generatedSubtitles.map((sub, idx) => (
+                                         <div key={idx} className="flex items-center gap-2 bg-white border border-indigo-200 rounded-xl p-2">
+                                             <span className="text-indigo-400 font-mono text-xs select-none w-6 text-center">{idx + 1}</span>
+                                             <p className="flex-1 text-sm text-gray-700">{sub}</p>
+                                             <button 
+                                                onClick={() => navigator.clipboard.writeText(sub)}
+                                                className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
+                                                title="Sao chép"
+                                             >
+                                                <Copy size={14} />
+                                             </button>
+                                         </div>
+                                     ))}
+                                 </div>
+                             </div>
+                         )}
+                       </div>
+                     ) : (
+                        <div className="text-center p-4">
+                            <button 
+                                onClick={() => selectedVideo.file && triggerAutoCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
+                                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 transition flex items-center justify-center gap-2"
+                            >
+                                <Sparkles size={18} /> Viết Caption & Hook Viral
+                            </button>
+                            <p className="text-xs text-indigo-400 mt-2">AI sẽ phân tích video để viết nội dung.</p>
+                        </div>
+                     )}
+                </div>
+              </div>
+            )}
 
             {/* --- ADVANCED CONFIG PANEL --- */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
@@ -522,8 +715,8 @@ const App: React.FC = () => {
               </div>
             </div>
 
-             {/* Action Button */}
-             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sticky bottom-4 z-10">
+             {/* Action Button (Desktop Only) */}
+             <div className="hidden lg:block bg-white rounded-2xl shadow-sm border border-gray-100 p-5 sticky bottom-4 z-10">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-sm text-gray-500 font-medium">Danh sách: {videos.length} video</span>
                   {videos.length > 0 && (
@@ -551,76 +744,13 @@ const App: React.FC = () => {
 
           </div>
 
-          {/* MIDDLE COLUMN: Video Queue List - UPDATED HEIGHT FOR MOBILE */}
-          <div className="lg:col-span-3 flex flex-col h-auto max-h-[500px] lg:h-auto lg:max-h-none">
-             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col h-full overflow-hidden">
-                <div className="p-4 border-b border-gray-100 bg-gray-50">
-                   <h3 className="font-bold text-gray-800 flex items-center gap-2"><FileVideo size={18}/> Danh sách chờ</h3>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[200px]">
-                   {videos.length === 0 ? (
-                     <div className="h-full flex flex-col items-center justify-center text-gray-400 p-4 text-center">
-                        <FileVideo size={32} className="mb-2 opacity-50"/>
-                        <p className="text-sm">Chưa có video nào.</p>
-                     </div>
-                   ) : (
-                     videos.map((video) => (
-                       <div 
-                          key={video.id} 
-                          onClick={() => setSelectedVideoId(video.id)}
-                          className={`p-3 rounded-xl border cursor-pointer transition-all relative group ${
-                            selectedVideoId === video.id 
-                            ? 'bg-orange-50 border-[#ee4d2d] ring-1 ring-[#ee4d2d]/20' 
-                            : 'bg-white border-gray-200 hover:border-orange-200'
-                          }`}
-                       >
-                          <div className="flex justify-between items-start mb-1">
-                             <div className="flex-1 min-w-0 pr-2">
-                                <p className="text-xs font-bold text-gray-800 truncate" title={video.name}>{video.name}</p>
-                                <div className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1">
-                                   {video.sourceType === 'url' ? <LinkIcon size={10}/> : <FileVideo size={10}/>}
-                                   {video.duration ? `${Math.floor(video.duration)}s` : ''}
-                                   {/* Change: Display detected extension if completed */}
-                                   {video.status === 'completed' && (
-                                     <span className="ml-1 uppercase px-1 bg-green-100 rounded text-[9px] text-green-700 font-bold border border-green-200">
-                                       {video.extension || 'MP4'}
-                                     </span>
-                                   )}
-                                </div>
-                             </div>
-                             <button 
-                               onClick={(e) => { e.stopPropagation(); removeVideo(video.id); }}
-                               className="text-gray-300 hover:text-red-500 transition-opacity"
-                             >
-                               <Trash2 size={14} />
-                             </button>
-                          </div>
 
-                          {/* Status Bar */}
-                          <div className="mt-2">
-                             <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                                <div 
-                                  className={`h-full transition-all duration-300 ${
-                                    video.status === 'error' ? 'bg-red-500' :
-                                    video.status === 'completed' ? 'bg-green-500' :
-                                    'bg-[#ee4d2d]'
-                                  }`}
-                                  style={{ width: video.status === 'fetching' || video.status === 'queued' ? '0%' : `${video.progress}%` }} 
-                                />
-                             </div>
-                          </div>
-                       </div>
-                     ))
-                   )}
-                </div>
-             </div>
-          </div>
 
-          {/* RIGHT COLUMN: Preview Player & AI Caption */}
-          <div className="lg:col-span-5 flex flex-col h-[600px] lg:h-auto gap-6">
+          {/* RIGHT COLUMN: Preview Player */}
+          <div className="lg:col-span-7 flex flex-col h-auto gap-6" id="preview-section">
             
             {/* Player */}
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col sticky top-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                  <Play size={20} className="text-[#ee4d2d]" /> Xem trước
               </h2>
@@ -670,158 +800,57 @@ const App: React.FC = () => {
                  </div>
               )}
             </div>
-
-            {/* AI Caption Section - UPDATED: MANUAL TRIGGER */}
-            {selectedVideo && (selectedVideo.status === 'idle' || selectedVideo.status === 'completed' || selectedVideo.status === 'processing') && (
-              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl shadow-sm border border-indigo-100 p-5">
-                <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
-                       <Wand2 size={20} className="text-indigo-600" /> AI Caption
-                    </h2>
-                    {selectedVideo.generatedCaption && (
-                        <button 
-                            onClick={() => handleRegenerateCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
-                            className="p-1.5 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                            title="Tạo lại"
-                        >
-                            <RefreshCw size={16} />
-                        </button>
-                    )}
-                </div>
-                
-                <div className="space-y-3">
-                   
-                   {/* Platform Selector */}
-                   <div className="flex bg-white p-1 rounded-xl border border-indigo-100">
-                        {(['shopee', 'tiktok', 'reels'] as const).map((p) => (
-                            <button
-                                key={p}
-                                onClick={() => setPlatform(p)}
-                                className={`flex-1 py-1.5 text-xs font-bold rounded-lg capitalize transition ${
-                                    platform === p 
-                                    ? 'bg-indigo-600 text-white shadow-sm' 
-                                    : 'text-gray-500 hover:bg-gray-50'
-                                }`}
-                            >
-                                {p}
-                            </button>
-                        ))}
-                   </div>
-
-                   {/* Subtitle Toggle */}
-                   <button
-                        onClick={() => setIncludeSubtitles(!includeSubtitles)}
-                        className={`w-full py-2 rounded-xl border flex items-center justify-center gap-2 transition text-xs font-medium ${
-                            includeSubtitles
-                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700' 
-                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                        }`}
-                   >
-                        <Type size={14} />
-                        {includeSubtitles ? 'Đang bật: Tạo Subtitle Gợi Ý' : 'Bật tạo Subtitle Gợi Ý (Tốn thời gian hơn)'}
-                   </button>
-
-                   <div className="relative">
-                     <input 
-                       type="text" 
-                       value={selectedVideo.productTitle || ''}
-                       onChange={(e) => {
-                          const val = e.target.value;
-                          setVideos(prev => prev.map(v => v.id === selectedVideo.id ? { ...v, productTitle: val } : v));
-                       }}
-                       placeholder="Nhập tên sản phẩm..."
-                       className="w-full text-sm p-3 rounded-xl border border-indigo-200 focus:ring-2 focus:ring-indigo-300 outline-none pr-10"
-                     />
-                   </div>
-
-                   {selectedVideo.isGeneratingCaption ? (
-                        <div className="w-full text-sm p-8 rounded-xl border border-dashed border-indigo-200 bg-white/50 flex flex-col items-center justify-center text-indigo-500 min-h-[120px]">
-                           <Loader2 className="animate-spin mb-2" size={24} />
-                           <span>AI đang viết...</span>
-                        </div>
-                     ) : selectedVideo.generatedCaption ? (
-                       <div className="relative mt-2 animate-in fade-in duration-500 space-y-4">
-                         
-                         {/* Hook Input */}
-                         <div>
-                             <label className="text-xs font-bold text-indigo-800 mb-1 block">Hook Viral (Lora Font):</label>
-                             <div className="relative">
-                                 <input 
-                                    type="text"
-                                    value={config.textOverlay.text}
-                                    onChange={(e) => updateTextOverlay({ text: e.target.value.toUpperCase() })}
-                                    className="w-full text-sm p-3 rounded-xl border border-indigo-200 bg-white font-lora font-bold uppercase pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                                    placeholder="HOOK VIRAL..."
-                                 />
-                                 <button 
-                                    onClick={() => navigator.clipboard.writeText(config.textOverlay.text || '')}
-                                    className="absolute top-2 right-2 p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
-                                    title="Sao chép Hook"
-                                 >
-                                    <Copy size={14} />
-                                 </button>
-                             </div>
-                             <p className="text-[10px] text-gray-400 italic mt-1">Tự động in hoa & chèn vào vị trí bottom.</p>
-                         </div>
-
-                         <div>
-                             <label className="text-xs font-bold text-indigo-800 mb-1 block">Caption Viral:</label>
-                             <div className="relative">
-                                <textarea 
-                                    readOnly
-                                    className="w-full text-sm p-3 rounded-xl border border-indigo-200 bg-white min-h-[120px] focus:outline-none"
-                                    value={selectedVideo.generatedCaption}
-                                />
-                                <button 
-                                    onClick={() => navigator.clipboard.writeText(selectedVideo.generatedCaption || '')}
-                                    className="absolute top-2 right-2 p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
-                                    title="Sao chép Caption"
-                                >
-                                    <Copy size={14} />
-                                </button>
-                             </div>
-                         </div>
-
-                         {selectedVideo.generatedSubtitles && selectedVideo.generatedSubtitles.length > 0 && includeSubtitles && (
-                             <div>
-                                 <label className="text-xs font-bold text-indigo-800 mb-1 block">Subtitles Gợi Ý:</label>
-                                 <div className="space-y-2">
-                                     {selectedVideo.generatedSubtitles.map((sub, idx) => (
-                                         <div key={idx} className="flex items-center gap-2 bg-white border border-indigo-200 rounded-xl p-2">
-                                             <span className="text-indigo-400 font-mono text-xs select-none w-6 text-center">{idx + 1}</span>
-                                             <p className="flex-1 text-sm text-gray-700">{sub}</p>
-                                             <button 
-                                                onClick={() => navigator.clipboard.writeText(sub)}
-                                                className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition"
-                                                title="Sao chép"
-                                             >
-                                                <Copy size={14} />
-                                             </button>
-                                         </div>
-                                     ))}
-                                 </div>
-                             </div>
-                         )}
-                       </div>
-                     ) : (
-                     <div className="text-center py-6 bg-white/50 rounded-xl border border-dashed border-indigo-200 text-indigo-400 text-sm flex flex-col items-center gap-3">
-                        <p>Chưa có caption.</p>
-                        <button 
-                            onClick={() => handleRegenerateCaption(selectedVideo.id, selectedVideo.file, selectedVideo.productTitle)}
-                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-                        >
-                           <Sparkles size={16} /> Viết Caption
-                        </button>
-                     </div>
-                   )}
-                </div>
-              </div>
-            )}
             
           </div>
 
         </div>
       </main>
+      {/* MOBILE FLOATING ACTION BAR */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-3 z-50 lg:hidden grid grid-cols-3 gap-2 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+          <button
+            onClick={processAllVideos}
+            disabled={videos.length === 0 || isProcessingBatch}
+            className={`flex flex-col items-center justify-center py-2 rounded-lg font-bold text-white transition-all text-[10px]
+              ${videos.length === 0 
+                ? 'bg-gray-300 cursor-not-allowed' 
+                : isProcessingBatch
+                  ? 'bg-orange-400 cursor-wait'
+                  : 'bg-[#ee4d2d] hover:bg-[#d73211]'
+              }`}
+          >
+            {isProcessingBatch ? (
+              <Loader2 className="animate-spin mb-1" size={18} />
+            ) : (
+              <Sparkles size={18} className="mb-1" />
+            )}
+            <span>Xuất Video</span>
+          </button>
+
+          <button
+            onClick={() => document.getElementById('preview-section')?.scrollIntoView({ behavior: 'smooth' })}
+            className="flex flex-col items-center justify-center py-2 rounded-lg font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-all text-[10px]"
+          >
+            <Eye size={18} className="mb-1" />
+            <span>Xem Video</span>
+          </button>
+
+          {selectedVideo && selectedVideo.status === 'completed' && selectedVideo.resultUrl ? (
+             <a
+               href={selectedVideo.resultUrl}
+               download={`${getRandomFilename()}.${selectedVideo.extension || 'mp4'}`}
+               className="flex flex-col items-center justify-center py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition text-[10px]"
+             >
+               <Download size={18} className="mb-1" />
+               <span>Tải Video</span>
+             </a>
+          ) : (
+            <button disabled className="flex flex-col items-center justify-center py-2 bg-gray-100 text-gray-300 rounded-lg font-bold text-[10px]">
+               <Download size={18} className="mb-1" />
+               <span>Tải Video</span>
+            </button>
+          )}
+      </div>
+
     </div>
   );
 };
